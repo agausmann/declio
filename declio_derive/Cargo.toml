@@ -1,0 +1,13 @@
+[package]
+name = "declio_derive"
+version = "0.1.0"
+authors = ["Adam Gausmann <agausmann@fastmail.com>"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling = "0.10"
+quote = "1.0"
+syn = "1.0"

@@ -1,7 +1,7 @@
 //! Types that give context to serializers.
 
 /// The endianness, or byte order, of primitive types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Endian {
     /// Big-endian (most-significant-byte first).
     Big,
@@ -29,4 +29,5 @@ impl Default for Endian {
 }
 
 /// The number of elements in variable-sized containers.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Len(pub usize);

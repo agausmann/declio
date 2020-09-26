@@ -4,6 +4,9 @@
 
 pub mod ctx;
 
+#[cfg(feature = "derive")]
+pub use declio_derive::{Deserialize, Serialize};
+
 use self::ctx::{Endian, Len};
 use std::{io, mem};
 
