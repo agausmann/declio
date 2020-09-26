@@ -8,6 +8,7 @@ pub mod ctx;
 pub use declio_derive::{Deserialize, Serialize};
 
 use self::ctx::{Endian, Len};
+use std::borrow::Cow;
 use std::{io, mem};
 
 /// A type that can be serialized into a byte stream.
@@ -128,6 +129,33 @@ where
         R: io::Read,
     {
         T::deserialize(inner_ctx, reader).map(Some)
+    }
+}
+
+impl<'a, T, Ctx> Serialize<Ctx> for Cow<'a, T>
+where
+    T: Serialize<Ctx> + ToOwned,
+{
+    /// Borrows a value of type `T` and serializes it.
+    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        self.as_ref().serialize(inner_ctx, writer)
+    }
+}
+
+impl<'a, T, Ctx> Deserialize<Ctx> for Cow<'a, T>
+where
+    T: ToOwned,
+    T::Owned: Deserialize<Ctx>,
+{
+    /// Deserializes a value of type `T::Owned`.
+    fn deserialize<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    where
+        R: io::Read,
+    {
+        T::Owned::deserialize(inner_ctx, reader).map(Cow::Owned)
     }
 }
 
