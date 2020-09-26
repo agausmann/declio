@@ -43,6 +43,9 @@ where
     T: Serialize<Ctx>,
     Ctx: Clone,
 {
+    /// Serializes each element of the slice in order.
+    ///
+    /// If length is also to be serialized, it has to be done separately.
     fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
@@ -59,6 +62,9 @@ where
     T: Serialize<Ctx>,
     Ctx: Clone,
 {
+    /// Serializes each element of the vector in order.
+    ///
+    /// If length is also to be serialized, it has to be done separately.
     fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
@@ -72,6 +78,10 @@ where
     T: Deserialize<Ctx>,
     Ctx: Clone,
 {
+    /// Deserializes multiple values of type `T`, collecting them in a `Vec`.
+    ///
+    /// The length of the vector / number of elements deserialized is equal to the value of the
+    /// `Len` context.
     fn deserialize<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, io::Error>
     where
         R: io::Read,
@@ -81,6 +91,43 @@ where
             acc.push(T::deserialize(inner_ctx.clone(), reader)?);
         }
         Ok(acc)
+    }
+}
+
+impl<T, Ctx> Serialize<Ctx> for Option<T>
+where
+    T: Serialize<Ctx>,
+{
+    /// If `Some`, then the inner value is serialized, otherwise, nothing is written.
+    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        if let Some(inner) = self {
+            inner.serialize(inner_ctx, writer)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<T, Ctx> Deserialize<Ctx> for Option<T>
+where
+    T: Deserialize<Ctx>,
+{
+    /// Deserializes a value of type `T` and wraps it in `Some`.
+    ///
+    /// Detecting and deserializing a `None` should be done outside of this function by
+    /// checking the relevant conditions in other deserialized values and skipping this call if a
+    /// `None` is expected.
+    ///
+    /// Since serializing a `None` writes nothing, deserialization is also a no-op; just construct
+    /// a value of `None`.
+    fn deserialize<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    where
+        R: io::Read,
+    {
+        T::deserialize(inner_ctx, reader).map(Some)
     }
 }
 
