@@ -4,7 +4,7 @@
 
 pub mod ctx;
 
-use self::ctx::Endian;
+use self::ctx::{Endian, Len};
 use std::{io, mem};
 
 /// A type that can be serialized into a byte stream.
@@ -21,6 +21,64 @@ pub trait Deserialize<Ctx = ()>: Sized {
     fn deserialize<R>(ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
     where
         R: io::Read;
+}
+
+impl<T, Ctx> Serialize<Ctx> for &T
+where
+    T: Serialize<Ctx>,
+{
+    fn serialize<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        (*self).serialize(ctx, writer)
+    }
+}
+
+impl<T, Ctx> Serialize<Ctx> for [T]
+where
+    T: Serialize<Ctx>,
+    Ctx: Clone,
+{
+    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        for elem in self {
+            elem.serialize(inner_ctx.clone(), writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl<T, Ctx> Serialize<Ctx> for Vec<T>
+where
+    T: Serialize<Ctx>,
+    Ctx: Clone,
+{
+    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        self.as_slice().serialize(inner_ctx, writer)
+    }
+}
+
+impl<T, Ctx> Deserialize<(Len, Ctx)> for Vec<T>
+where
+    T: Deserialize<Ctx>,
+    Ctx: Clone,
+{
+    fn deserialize<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, io::Error>
+    where
+        R: io::Read,
+    {
+        let mut acc = Self::with_capacity(len);
+        for _ in 0..len {
+            acc.push(T::deserialize(inner_ctx.clone(), reader)?);
+        }
+        Ok(acc)
+    }
 }
 
 macro_rules! impl_primitive {

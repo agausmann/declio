@@ -27,3 +27,6 @@ impl Default for Endian {
         Self::native()
     }
 }
+
+/// The number of elements in variable-sized containers.
+pub struct Len(pub usize);
