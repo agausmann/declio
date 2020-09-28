@@ -5,164 +5,164 @@
 pub mod ctx;
 
 #[cfg(feature = "derive")]
-pub use declio_derive::{Deserialize, Serialize};
+pub use declio_derive::{Decode, Encode};
 
 use self::ctx::{Endian, Len};
 use std::borrow::Cow;
 use std::{io, mem};
 
-/// A type that can be serialized into a byte stream.
-pub trait Serialize<Ctx = ()> {
-    /// Serializes `&self` to the given writer.
-    fn serialize<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+/// A type that can be encoded into a byte stream.
+pub trait Encode<Ctx = ()> {
+    /// Encodes `&self` to the given writer.
+    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write;
 }
 
-/// A type that can be deserialized from a byte stream.
-pub trait Deserialize<Ctx = ()>: Sized {
-    /// Deserializes a value from the given reader.
-    fn deserialize<R>(ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+/// A type that can be decoded from a byte stream.
+pub trait Decode<Ctx = ()>: Sized {
+    /// Decodes a value from the given reader.
+    fn decode<R>(ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
     where
         R: io::Read;
 }
 
-impl<T, Ctx> Serialize<Ctx> for &T
+impl<T, Ctx> Encode<Ctx> for &T
 where
-    T: Serialize<Ctx>,
+    T: Encode<Ctx>,
 {
-    fn serialize<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
     {
-        (*self).serialize(ctx, writer)
+        (*self).encode(ctx, writer)
     }
 }
 
-impl<T, Ctx> Serialize<Ctx> for [T]
+impl<T, Ctx> Encode<Ctx> for [T]
 where
-    T: Serialize<Ctx>,
+    T: Encode<Ctx>,
     Ctx: Clone,
 {
-    /// Serializes each element of the slice in order.
+    /// Encodes each element of the slice in order.
     ///
-    /// If length is also to be serialized, it has to be done separately.
-    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    /// If length is also to be encoded, it has to be done separately.
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
     {
         for elem in self {
-            elem.serialize(inner_ctx.clone(), writer)?;
+            elem.encode(inner_ctx.clone(), writer)?;
         }
         Ok(())
     }
 }
 
-impl<T, Ctx> Serialize<Ctx> for Vec<T>
+impl<T, Ctx> Encode<Ctx> for Vec<T>
 where
-    T: Serialize<Ctx>,
+    T: Encode<Ctx>,
     Ctx: Clone,
 {
-    /// Serializes each element of the vector in order.
+    /// Encodes each element of the vector in order.
     ///
-    /// If length is also to be serialized, it has to be done separately.
-    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    /// If length is also to be encoded, it has to be done separately.
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
     {
-        self.as_slice().serialize(inner_ctx, writer)
+        self.as_slice().encode(inner_ctx, writer)
     }
 }
 
-impl<T, Ctx> Deserialize<(Len, Ctx)> for Vec<T>
+impl<T, Ctx> Decode<(Len, Ctx)> for Vec<T>
 where
-    T: Deserialize<Ctx>,
+    T: Decode<Ctx>,
     Ctx: Clone,
 {
-    /// Deserializes multiple values of type `T`, collecting them in a `Vec`.
+    /// Decodes multiple values of type `T`, collecting them in a `Vec`.
     ///
-    /// The length of the vector / number of elements deserialized is equal to the value of the
+    /// The length of the vector / number of elements decoded is equal to the value of the
     /// `Len` context.
-    fn deserialize<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, io::Error>
     where
         R: io::Read,
     {
         let mut acc = Self::with_capacity(len);
         for _ in 0..len {
-            acc.push(T::deserialize(inner_ctx.clone(), reader)?);
+            acc.push(T::decode(inner_ctx.clone(), reader)?);
         }
         Ok(acc)
     }
 }
 
-impl<T, Ctx> Serialize<Ctx> for Option<T>
+impl<T, Ctx> Encode<Ctx> for Option<T>
 where
-    T: Serialize<Ctx>,
+    T: Encode<Ctx>,
 {
-    /// If `Some`, then the inner value is serialized, otherwise, nothing is written.
-    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    /// If `Some`, then the inner value is encoded, otherwise, nothing is written.
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
     {
         if let Some(inner) = self {
-            inner.serialize(inner_ctx, writer)
+            inner.encode(inner_ctx, writer)
         } else {
             Ok(())
         }
     }
 }
 
-impl<T, Ctx> Deserialize<Ctx> for Option<T>
+impl<T, Ctx> Decode<Ctx> for Option<T>
 where
-    T: Deserialize<Ctx>,
+    T: Decode<Ctx>,
 {
-    /// Deserializes a value of type `T` and wraps it in `Some`.
+    /// Decodes a value of type `T` and wraps it in `Some`.
     ///
     /// Detecting and deserializing a `None` should be done outside of this function by
-    /// checking the relevant conditions in other deserialized values and skipping this call if a
+    /// checking the relevant conditions in other decoded values and skipping this call if a
     /// `None` is expected.
     ///
     /// Since serializing a `None` writes nothing, deserialization is also a no-op; just construct
     /// a value of `None`.
-    fn deserialize<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
     where
         R: io::Read,
     {
-        T::deserialize(inner_ctx, reader).map(Some)
+        T::decode(inner_ctx, reader).map(Some)
     }
 }
 
-impl<'a, T, Ctx> Serialize<Ctx> for Cow<'a, T>
+impl<'a, T, Ctx> Encode<Ctx> for Cow<'a, T>
 where
-    T: Serialize<Ctx> + ToOwned,
+    T: Encode<Ctx> + ToOwned,
 {
-    /// Borrows a value of type `T` and serializes it.
-    fn serialize<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    /// Borrows a value of type `T` and encodes it.
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
     where
         W: io::Write,
     {
-        self.as_ref().serialize(inner_ctx, writer)
+        self.as_ref().encode(inner_ctx, writer)
     }
 }
 
-impl<'a, T, Ctx> Deserialize<Ctx> for Cow<'a, T>
+impl<'a, T, Ctx> Decode<Ctx> for Cow<'a, T>
 where
     T: ToOwned,
-    T::Owned: Deserialize<Ctx>,
+    T::Owned: Decode<Ctx>,
 {
-    /// Deserializes a value of type `T::Owned`.
-    fn deserialize<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    /// Decodes a value of type `T::Owned`.
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
     where
         R: io::Read,
     {
-        T::Owned::deserialize(inner_ctx, reader).map(Cow::Owned)
+        T::Owned::decode(inner_ctx, reader).map(Cow::Owned)
     }
 }
 
 macro_rules! impl_primitive {
     ($($t:ty)*) => {$(
-        impl Serialize<Endian> for $t {
-            fn serialize<W>(&self, endian: Endian, writer: &mut W) -> Result<(), io::Error>
+        impl Encode<Endian> for $t {
+            fn encode<W>(&self, endian: Endian, writer: &mut W) -> Result<(), io::Error>
             where
                 W: io::Write,
             {
@@ -174,17 +174,17 @@ macro_rules! impl_primitive {
             }
         }
 
-        impl Serialize for $t {
-            fn serialize<W>(&self, _: (), writer: &mut W) -> Result<(), io::Error>
+        impl Encode for $t {
+            fn encode<W>(&self, _: (), writer: &mut W) -> Result<(), io::Error>
             where
                 W: io::Write,
             {
-                self.serialize(Endian::default(), writer)
+                self.encode(Endian::default(), writer)
             }
         }
 
-        impl Deserialize<Endian> for $t {
-            fn deserialize<R>(endian: Endian, reader: &mut R) -> Result<Self, io::Error>
+        impl Decode<Endian> for $t {
+            fn decode<R>(endian: Endian, reader: &mut R) -> Result<Self, io::Error>
             where
                 R: io::Read,
             {
@@ -197,12 +197,12 @@ macro_rules! impl_primitive {
             }
         }
 
-        impl Deserialize for $t {
-            fn deserialize<R>(_: (), reader: &mut R) -> Result<Self, io::Error>
+        impl Decode for $t {
+            fn decode<R>(_: (), reader: &mut R) -> Result<Self, io::Error>
             where
                 R: io::Read,
             {
-                Self::deserialize(Endian::default(), reader)
+                Self::decode(Endian::default(), reader)
             }
         }
     )*}

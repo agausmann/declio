@@ -1,4 +1,4 @@
-//! Types that give context to serializers.
+//! Types that give context to encoder.
 
 /// The endianness, or byte order, of primitive types.
 #[derive(Debug, Clone, Copy, PartialEq)]
