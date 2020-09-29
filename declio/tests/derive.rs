@@ -12,7 +12,6 @@ where
 #[test]
 fn test_unit_struct_encode() {
     #[derive(Encode)]
-    #[declio(bound = "UnitStruct: Encode")]
     struct UnitStruct;
 
     test_encode(UnitStruct, &[]);
