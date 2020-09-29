@@ -9,7 +9,7 @@ use syn::{parse_macro_input, DeriveInput};
 pub fn derive_encode(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     Container::from_derive_input(&input)
-        .and_then(Container::impl_encode)
+        .and_then(|c| c.impl_encode())
         .map(ToTokens::into_token_stream)
         .unwrap_or_else(Error::write_errors)
         .into()
@@ -19,7 +19,7 @@ pub fn derive_encode(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 pub fn derive_decode(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     Container::from_derive_input(&input)
-        .and_then(Container::impl_decode)
+        .and_then(|c| c.impl_decode())
         .map(ToTokens::into_token_stream)
         .unwrap_or_else(Error::write_errors)
         .into()

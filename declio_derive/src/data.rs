@@ -1,4 +1,5 @@
 use darling::{ast, Error, FromDeriveInput, FromField, FromMeta, FromVariant};
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::parse_quote;
 
@@ -11,24 +12,31 @@ pub struct Container {
 
     #[darling(default)]
     crate_path: Option<syn::Path>,
+
+    #[darling(default)]
+    id: Option<syn::LitStr>,
+
+    #[darling(default)]
+    id_type: Option<syn::LitStr>,
 }
 
 impl Container {
-    pub fn impl_encode(self) -> Result<syn::ItemImpl, Error> {
+    pub fn impl_encode(&self) -> Result<syn::ItemImpl, Error> {
         let Self {
             ident,
             generics,
             data,
             crate_path,
+            ..
         } = self;
 
-        let crate_path = crate_path.unwrap_or_else(|| parse_quote!(declio));
+        let crate_path = crate_path.clone().unwrap_or_else(|| parse_quote!(declio));
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
         let writer_binding: syn::Ident = parse_quote!(writer);
 
         let variants = match data {
-            ast::Data::Enum(variants) => variants,
-            ast::Data::Struct(fields) => vec![Variant::from_struct(fields)],
+            ast::Data::Enum(variants) => variants.clone(),
+            ast::Data::Struct(fields) => vec![Variant::from_struct(fields.clone())],
         };
         let variant_arms = variants.into_iter().map(|var| {
             var.generate_encode_arm(&crate_path, &writer_binding)
@@ -53,21 +61,44 @@ impl Container {
         })
     }
 
-    pub fn impl_decode(self) -> Result<syn::ItemImpl, Error> {
+    pub fn impl_decode(&self) -> Result<syn::ItemImpl, Error> {
         let Self {
             ident,
             generics,
             data,
             crate_path,
+            id,
+            id_type,
         } = self;
 
-        let crate_path = crate_path.unwrap_or_else(|| parse_quote!(declio));
+        let crate_path = crate_path.clone().unwrap_or_else(|| parse_quote!(declio));
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
         let reader_binding: syn::Ident = parse_quote!(reader);
 
+        let id_expr: TokenStream;
+        if data.is_struct() {
+            id_expr = match (id, id_type) {
+                (None, None) => quote!(()),
+                _ => Error::custom("`id` and `id_type` are only allowed for enum types")
+                    .write_errors(),
+            };
+        } else {
+            id_expr = match (id, id_type) {
+                (None, None) => {
+                    Error::custom("enum types must specify either `id` or `id_type`").write_errors()
+                }
+                (Some(id), None) => id.parse().unwrap_or_else(|e| e.to_compile_error()),
+                (None, Some(id_type)) => quote! {
+                    let id_type: syn::TokenStream = id_type.parse().unwrap_or_else(|e| e.to_compile_error())
+                    <#id_type as #crate_path::Decode>::decode((), #reader_binding)?
+                },
+                _ => Error::custom("only one of `id` or `id_type` may be specified").write_errors(),
+            };
+        }
+
         let variants = match data {
-            ast::Data::Enum(variants) => variants,
-            ast::Data::Struct(fields) => vec![Variant::from_struct(fields)],
+            ast::Data::Enum(variants) => variants.clone(),
+            ast::Data::Struct(fields) => vec![Variant::from_struct(fields.clone())],
         };
         let variant_arms = variants.into_iter().map(|var| {
             var.generate_decode_arm(&crate_path, &reader_binding)
@@ -84,7 +115,7 @@ impl Container {
                 where
                     R: #crate_path::export::io::Read,
                 {
-                    let id = todo!();
+                    let id = #id_expr;
                     match id {
                         #( #variant_arms )*
                     }
@@ -94,7 +125,7 @@ impl Container {
     }
 }
 
-#[derive(FromVariant)]
+#[derive(Clone, FromVariant)]
 #[darling(attributes(declio))]
 pub struct Variant {
     ident: syn::Ident,
@@ -102,6 +133,8 @@ pub struct Variant {
 
     #[darling(skip)]
     from_struct: bool,
+
+    id: syn::LitStr,
 }
 
 impl Variant {
@@ -110,11 +143,16 @@ impl Variant {
             ident: parse_quote!(__declio_unused),
             fields,
             from_struct: true,
+            id: syn::LitStr::new("()", Span::call_site()),
         }
     }
 
+    pub fn id_expr(&self) -> Result<syn::Expr, Error> {
+        self.id.parse().map_err(Error::custom)
+    }
+
     pub fn generate_encode_arm(
-        self,
+        &self,
         crate_path: &syn::Path,
         writer_binding: &syn::Ident,
     ) -> Result<syn::Arm, Error> {
@@ -122,10 +160,16 @@ impl Variant {
             ident,
             fields,
             from_struct,
+            ..
         } = self;
 
+        let id_expr = self
+            .id_expr()
+            .map(ToTokens::into_token_stream)
+            .unwrap_or_else(Error::write_errors);
+
         let path: syn::Path;
-        if from_struct {
+        if *from_struct {
             path = parse_quote!(Self);
         } else {
             path = parse_quote!(Self::#ident);
@@ -154,6 +198,7 @@ impl Variant {
 
         Ok(parse_quote! {
             #path #pat_fields => {
+                #crate_path::Encode::encode(&(#id_expr), (), #writer_binding)?;
                 #( #field_encoders ?; )*
                 Ok(())
             }
@@ -161,7 +206,7 @@ impl Variant {
     }
 
     pub fn generate_decode_arm(
-        self,
+        &self,
         crate_path: &syn::Path,
         reader_binding: &syn::Ident,
     ) -> Result<syn::Arm, Error> {
@@ -169,16 +214,22 @@ impl Variant {
             ident,
             fields,
             from_struct,
+            ..
         } = self;
+
+        let id_expr = self
+            .id_expr()
+            .map(ToTokens::into_token_stream)
+            .unwrap_or_else(Error::write_errors);
 
         let path: syn::Path;
         let id_pat: syn::Pat;
-        if from_struct {
+        if *from_struct {
             path = parse_quote!(Self);
-            id_pat = parse_quote!(_);
+            id_pat = parse_quote!(());
         } else {
             path = parse_quote!(Self::#ident);
-            id_pat = todo!();
+            id_pat = parse_quote!(id if id == #id_expr)
         }
 
         let cons_fields_inner = fields
@@ -213,7 +264,7 @@ impl Variant {
     }
 }
 
-#[derive(FromField)]
+#[derive(Clone, FromField)]
 #[darling(attributes(declio))]
 pub struct Field {
     ident: Option<syn::Ident>,
