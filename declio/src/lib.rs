@@ -141,7 +141,7 @@ where
     where
         W: io::Write,
     {
-        self.as_ref().encode(inner_ctx, writer)
+        T::encode(&*self, inner_ctx, writer)
     }
 }
 
@@ -155,7 +155,53 @@ where
     where
         R: io::Read,
     {
-        T::Owned::decode(inner_ctx, reader).map(Cow::Owned)
+        T::Owned::decode(inner_ctx, reader).map(Self::Owned)
+    }
+}
+
+impl<T, Ctx> Encode<Ctx> for Box<T>
+where
+    T: Encode<Ctx>,
+{
+    /// Encodes the boxed value.
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        T::encode(&*self, inner_ctx, writer)
+    }
+}
+
+impl<T, Ctx> Decode<Ctx> for Box<T>
+where
+    T: Decode<Ctx>,
+{
+    /// Decodes a value of type `T` and boxes it.
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    where
+        R: io::Read,
+    {
+        T::decode(inner_ctx, reader).map(Self::new)
+    }
+}
+
+impl Encode for () {
+    /// No-op.
+    fn encode<W>(&self, _: (), _: &mut W) -> Result<(), io::Error>
+    where
+        W: io::Write,
+    {
+        Ok(())
+    }
+}
+
+impl Decode for () {
+    /// No-op.
+    fn decode<R>(_: (), _: &mut R) -> Result<Self, io::Error>
+    where
+        R: io::Read,
+    {
+        Ok(())
     }
 }
 
