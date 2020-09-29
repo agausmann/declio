@@ -1,3 +1,3 @@
 # declio
 
-A declarative I/O serialization library.
+Declarative I/O. Write bidirectional encoders for binary formats with ease!
