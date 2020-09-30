@@ -38,8 +38,20 @@ impl Container {
             ast::Data::Enum(variants) => variants.clone(),
             ast::Data::Struct(fields) => vec![Variant::from_struct(fields.clone())],
         };
+        let id_type: TokenStream;
+        if data.is_struct() {
+            id_type = match &self.id_type {
+                None => quote!(()),
+                _ => Error::unknown_field("id_type").write_errors(),
+            };
+        } else {
+            id_type = match &self.id_type {
+                Some(id_type) => id_type.parse().unwrap_or_else(|e| e.to_compile_error()),
+                _ => Error::missing_field("id_type").write_errors(),
+            };
+        }
         let variant_arms = variants.into_iter().map(|var| {
-            var.generate_encode_arm(&crate_path, &writer_binding)
+            var.generate_encode_arm(&crate_path, &id_type, &writer_binding)
                 .map(ToTokens::into_token_stream)
                 .unwrap_or_else(Error::write_errors)
         });
@@ -67,8 +79,7 @@ impl Container {
             generics,
             data,
             crate_path,
-            id,
-            id_type,
+            ..
         } = self;
 
         let crate_path = crate_path.clone().unwrap_or_else(|| parse_quote!(declio));
@@ -76,23 +87,24 @@ impl Container {
         let reader_binding: syn::Ident = parse_quote!(reader);
 
         let id_expr: TokenStream;
+        let id_type: TokenStream;
         if data.is_struct() {
-            id_expr = match (id, id_type) {
-                (None, None) => quote!(()),
-                _ => Error::custom("`id` and `id_type` are only allowed for enum types")
-                    .write_errors(),
+            id_expr = match &self.id {
+                None => quote!(()),
+                _ => Error::unknown_field("id").write_errors(),
             };
         } else {
-            id_expr = match (id, id_type) {
-                (None, None) => {
-                    Error::custom("enum types must specify either `id` or `id_type`").write_errors()
+            id_type = match &self.id_type {
+                Some(id_type) => id_type.parse().unwrap_or_else(|e| e.to_compile_error()),
+                _ => Error::missing_field("id_type").write_errors(),
+            };
+            id_expr = match &self.id {
+                Some(id) => id.parse().unwrap_or_else(|e| e.to_compile_error()),
+                None => {
+                    quote! {
+                        <#id_type as #crate_path::Decode>::decode((), #reader_binding)?
+                    }
                 }
-                (Some(id), None) => id.parse().unwrap_or_else(|e| e.to_compile_error()),
-                (None, Some(id_type)) => quote! {
-                    let id_type: syn::TokenStream = id_type.parse().unwrap_or_else(|e| e.to_compile_error())
-                    <#id_type as #crate_path::Decode>::decode((), #reader_binding)?
-                },
-                _ => Error::custom("only one of `id` or `id_type` may be specified").write_errors(),
             };
         }
 
@@ -118,6 +130,10 @@ impl Container {
                     let id = #id_expr;
                     match id {
                         #( #variant_arms )*
+                        _ => Err(#crate_path::export::io::Error::new(
+                            #crate_path::export::io::ErrorKind::InvalidData,
+                            "unknown id"
+                        ))
                     }
                 }
             }
@@ -154,6 +170,7 @@ impl Variant {
     pub fn generate_encode_arm(
         &self,
         crate_path: &syn::Path,
+        id_type: &TokenStream,
         writer_binding: &syn::Ident,
     ) -> Result<syn::Arm, Error> {
         let Self {
@@ -198,7 +215,7 @@ impl Variant {
 
         Ok(parse_quote! {
             #path #pat_fields => {
-                #crate_path::Encode::encode(&(#id_expr), (), #writer_binding)?;
+                <#id_type as #crate_path::Encode>::encode(&(#id_expr), (), #writer_binding)?;
                 #( #field_encoders ?; )*
                 Ok(())
             }
@@ -223,7 +240,9 @@ impl Variant {
             .unwrap_or_else(Error::write_errors);
 
         let path: syn::Path;
-        let id_pat: syn::Pat;
+        // XXX: would be syn::Pat, but guards aren't first-class patterns,
+        // only supported as part of a match arm.
+        let id_pat: TokenStream;
         if *from_struct {
             path = parse_quote!(Self);
             id_pat = parse_quote!(());
