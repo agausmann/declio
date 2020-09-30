@@ -143,7 +143,7 @@ impl Container {
             impl #impl_generics #crate_path::Decode<()> for #ident #ty_generics
                 #where_clause
         {
-                fn decode<R>(_: (), reader: &mut R)
+                fn decode<R>(_: (), #reader_binding: &mut R)
                     -> Result<Self, #crate_path::export::io::Error>
                 where
                     R: #crate_path::export::io::Read,
@@ -309,6 +309,15 @@ impl Variant {
 struct Field {
     ident: Option<syn::Ident>,
     ty: syn::Type,
+
+    #[darling(default)]
+    with: Option<syn::Path>,
+
+    #[darling(default)]
+    encode_with: Option<syn::Path>,
+
+    #[darling(default)]
+    decode_with: Option<syn::Path>,
 }
 
 impl Field {
@@ -324,8 +333,46 @@ impl Field {
         binding: &syn::Ident,
         writer_binding: &syn::Ident,
     ) -> Result<syn::Expr, Error> {
-        let Self { ty, .. } = self;
-        Ok(parse_quote! { <#ty as #crate_path::Encode>::encode(#binding, (), #writer_binding) })
+        let Self {
+            ty,
+            with,
+            encode_with,
+            ..
+        } = self;
+        match (with, encode_with) {
+            (None, None) => Ok(
+                parse_quote! { <#ty as #crate_path::Encode>::encode(#binding, (), #writer_binding) },
+            ),
+            (Some(with), None) => {
+                Ok(parse_quote!({
+                    // sanitize scope
+                    fn __encode<__W>(__val: &#ty, _: (), __writer: &mut __W)
+                        -> Result<(), #crate_path::export::io::Error>
+                    where
+                        __W: #crate_path::export::io::Write,
+                    {
+                        #with::encode(__val, (), __writer)
+                    }
+                    __encode(#binding, (), #writer_binding)
+                }))
+            }
+            (None, Some(encode_with)) => {
+                Ok(parse_quote!({
+                    // sanitize scope
+                    fn __encode<__W>(__val: &#ty, _: (), __writer: &mut __W)
+                        -> Result<(), #crate_path::export::io::Error>
+                    where
+                        __W: #crate_path::export::io::Write,
+                    {
+                        #encode_with(__val, (), __writer)
+                    }
+                    __encode(#binding, (), #writer_binding)
+                }))
+            }
+            _ => Err(Error::custom(
+                "conflicting fields: `with` and `encode_with`",
+            )),
+        }
     }
 
     fn generate_decoder(
@@ -333,7 +380,45 @@ impl Field {
         crate_path: &syn::Path,
         reader_binding: &syn::Ident,
     ) -> Result<syn::Expr, Error> {
-        let Self { ty, .. } = self;
-        Ok(parse_quote! { <#ty as #crate_path::Decode>::decode((), #reader_binding) })
+        let Self {
+            ty,
+            with,
+            decode_with,
+            ..
+        } = self;
+        match (with, decode_with) {
+            (None, None) => {
+                Ok(parse_quote! { <#ty as #crate_path::Decode>::decode((), #reader_binding) })
+            }
+            (Some(with), None) => {
+                Ok(parse_quote!({
+                    // sanitize scope
+                    fn __decode<__R>(_: (), __reader: &mut __R)
+                        -> Result<#ty, #crate_path::export::io::Error>
+                    where
+                        __R: #crate_path::export::io::Read,
+                    {
+                        #with::decode((), __reader)
+                    }
+                    __decode((), #reader_binding)
+                }))
+            }
+            (None, Some(decode_with)) => {
+                Ok(parse_quote!({
+                    // sanitize scope
+                    fn __decode<__R>(_: (), __reader: &mut __R)
+                        -> Result<#ty, #crate_path::export::io::Error>
+                    where
+                        __R: #crate_path::export::io::Read,
+                    {
+                        #decode_with((), __reader)
+                    }
+                    __decode((), #reader_binding)
+                }))
+            }
+            _ => Err(Error::custom(
+                "conflicting fields: `with` and `decode_with`",
+            )),
+        }
     }
 }
