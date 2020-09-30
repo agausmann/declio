@@ -111,7 +111,7 @@ impl Container {
                 #where_clause
         {
                 fn decode<R>(_: (), reader: &mut R)
-                    -> Result<(), #crate_path::export::io::Error>
+                    -> Result<Self, #crate_path::export::io::Error>
                 where
                     R: #crate_path::export::io::Read,
                 {

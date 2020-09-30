@@ -1,4 +1,17 @@
-use declio::Encode;
+use declio::{Decode, Encode};
+use std::fmt::Debug;
+
+#[derive(Debug, PartialEq, Encode, Decode)]
+struct UnitStruct;
+
+#[derive(Debug, PartialEq, Encode, Decode)]
+struct TupleStruct(u8, u32);
+
+#[derive(Debug, PartialEq, Encode, Decode)]
+struct Struct {
+    x: u8,
+    y: u32,
+}
 
 fn test_encode<T>(input: T, expected: &[u8])
 where
@@ -9,20 +22,30 @@ where
     assert_eq!(output, expected);
 }
 
-#[test]
-fn test_unit_struct_encode() {
-    #[derive(Encode)]
-    struct UnitStruct;
+fn test_decode<T>(mut input: &[u8], expected: T)
+where
+    T: Decode + Debug + PartialEq,
+{
+    let output = T::decode((), &mut input).unwrap();
+    assert_eq!(output, expected);
+}
 
-    test_encode(UnitStruct, &[]);
+fn test_bidir<T>(val: T, bytes: &[u8])
+where
+    T: Encode + Decode + Debug + PartialEq,
+{
+    test_encode(&val, bytes);
+    test_decode(bytes, val);
 }
 
 #[test]
-fn test_tuple_struct_encode() {
-    #[derive(Encode)]
-    struct TupleStruct(u8, u32);
+fn test_unit_struct() {
+    test_bidir(UnitStruct, &[]);
+}
 
-    test_encode(
+#[test]
+fn test_tuple_struct() {
+    test_bidir(
         TupleStruct(0xab, 0xdeadbeef),
         &[0xab, 0xef, 0xbe, 0xad, 0xde],
     );
@@ -30,13 +53,7 @@ fn test_tuple_struct_encode() {
 
 #[test]
 fn test_struct_encode() {
-    #[derive(Encode)]
-    struct Struct {
-        x: u8,
-        y: u32,
-    }
-
-    test_encode(
+    test_bidir(
         Struct {
             x: 0xab,
             y: 0xdeadbeef,
