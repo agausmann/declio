@@ -13,6 +13,17 @@ struct Struct {
     y: u32,
 }
 
+#[derive(Debug, PartialEq, Encode, Decode)]
+#[declio(id_type = "u8")]
+enum Enum {
+    #[declio(id = "0")]
+    Unit,
+    #[declio(id = "1")]
+    Tuple(u8, u32),
+    #[declio(id = "2")]
+    Struct { x: u8, y: u32 },
+}
+
 fn test_encode<T>(input: T, expected: &[u8])
 where
     T: Encode,
@@ -59,5 +70,29 @@ fn test_struct_encode() {
             y: 0xdeadbeef,
         },
         &[0xab, 0xef, 0xbe, 0xad, 0xde],
+    );
+}
+
+#[test]
+fn test_unit_enum() {
+    test_bidir(Enum::Unit, &[0x00]);
+}
+
+#[test]
+fn test_tuple_enum() {
+    test_bidir(
+        Enum::Tuple(0xab, 0xdeadbeef),
+        &[0x01, 0xab, 0xef, 0xbe, 0xad, 0xde],
+    );
+}
+
+#[test]
+fn test_struct_enum() {
+    test_bidir(
+        Enum::Struct {
+            x: 0xab,
+            y: 0xdeadbeef,
+        },
+        &[0x02, 0xab, 0xef, 0xbe, 0xad, 0xde],
     );
 }
