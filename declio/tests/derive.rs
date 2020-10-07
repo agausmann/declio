@@ -37,6 +37,26 @@ struct WithSeparate {
     y: u32,
 }
 
+#[derive(Debug, PartialEq, Encode, Decode)]
+struct FieldCtx {
+    #[declio(ctx = "ctx::Endian::Big")]
+    y: u32,
+}
+
+#[derive(Debug, PartialEq, Encode, Decode)]
+#[declio(ctx = "endian: ctx::Endian")]
+struct ContainerCtx {
+    #[declio(ctx = "endian")]
+    y: u32,
+}
+
+#[derive(Debug, PartialEq, Encode, Decode)]
+#[declio(id_type = "u16", id_ctx = "ctx::Endian::Big")]
+enum IdCtx {
+    #[declio(id = "1")]
+    Bar,
+}
+
 mod big_endian {
     use super::*;
 
@@ -55,29 +75,37 @@ mod big_endian {
     }
 }
 
-fn test_encode<T>(input: T, expected: &[u8])
+fn test_encode<T, Ctx>(input: T, expected: &[u8], ctx: Ctx)
 where
-    T: Encode,
+    T: Encode<Ctx>,
 {
     let mut output = Vec::new();
-    input.encode((), &mut output).unwrap();
+    input.encode(ctx, &mut output).unwrap();
     assert_eq!(output, expected);
 }
 
-fn test_decode<T>(mut input: &[u8], expected: T)
+fn test_decode<T, Ctx>(mut input: &[u8], expected: &T, ctx: Ctx)
 where
-    T: Decode + Debug + PartialEq,
+    T: Decode<Ctx> + Debug + PartialEq,
 {
-    let output = T::decode((), &mut input).unwrap();
-    assert_eq!(output, expected);
+    let output = T::decode(ctx, &mut input).unwrap();
+    assert_eq!(output, *expected);
 }
 
 fn test_bidir<T>(val: T, bytes: &[u8])
 where
     T: Encode + Decode + Debug + PartialEq,
 {
-    test_encode(&val, bytes);
-    test_decode(bytes, val);
+    test_bidir_ctx(val, bytes, ());
+}
+
+fn test_bidir_ctx<T, Ctx>(val: T, bytes: &[u8], ctx: Ctx)
+where
+    T: Encode<Ctx> + Decode<Ctx> + Debug + PartialEq,
+    Ctx: Copy,
+{
+    test_encode(&val, bytes, ctx);
+    test_decode(bytes, &val, ctx);
 }
 
 #[test]
@@ -136,4 +164,23 @@ fn with() {
 #[test]
 fn with_separate() {
     test_bidir(WithSeparate { y: 0xdeadbeef }, &[0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn field_ctx() {
+    test_bidir(FieldCtx { y: 0xdeadbeef }, &[0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn container_ctx() {
+    test_bidir_ctx(
+        ContainerCtx { y: 0xdeadbeef },
+        &[0xde, 0xad, 0xbe, 0xef],
+        (ctx::Endian::Big,),
+    );
+}
+
+#[test]
+fn id_ctx() {
+    test_bidir(IdCtx::Bar, &[0x00, 0x01]);
 }

@@ -1,8 +1,8 @@
-use darling::{ast, Error, FromDeriveInput, FromField, FromVariant};
+use darling::{ast, Error, FromDeriveInput, FromField, FromMeta, FromVariant};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use syn::parse_quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::punctuated::Punctuated;
+use syn::{parse_macro_input, parse_quote, DeriveInput, Token};
 
 #[proc_macro_derive(Encode, attributes(declio))]
 pub fn derive_encode(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -35,10 +35,16 @@ struct Container {
     crate_path: Option<syn::Path>,
 
     #[darling(default)]
+    ctx: Asym<syn::LitStr>,
+
+    #[darling(default)]
     id: Option<syn::LitStr>,
 
     #[darling(default)]
     id_type: Option<syn::LitStr>,
+
+    #[darling(default)]
+    id_ctx: Asym<syn::LitStr>,
 }
 
 impl Container {
@@ -55,33 +61,71 @@ impl Container {
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
         let writer_binding: syn::Ident = parse_quote!(writer);
 
+        let ctx_parts: Punctuated<syn::FnArg, Token![,]> = self
+            .ctx
+            .encode()
+            .map(|lit| lit.parse_with(Punctuated::parse_terminated))
+            .transpose()
+            .map_err(Error::custom)?
+            .unwrap_or_else(Punctuated::new);
+
+        let ctx_parts: Vec<syn::PatType> = ctx_parts
+            .into_iter()
+            .map(|pat| {
+                if let syn::FnArg::Typed(pat_type) = pat {
+                    Ok(pat_type)
+                } else {
+                    Err(Error::custom("expected a typed pattern, like `foo: i64`"))
+                }
+            })
+            .collect::<Result<_, _>>()?;
+
+        let ctx_pats = ctx_parts.iter().map(|pat_type| &pat_type.pat);
+        let ctx_pat: syn::Pat = parse_quote! {
+            ( #( #ctx_pats , )* )
+        };
+
+        let ctx_types = ctx_parts.iter().map(|pat_type| &pat_type.ty);
+        let ctx_type: syn::Type = parse_quote! {
+            ( #( #ctx_types , )* )
+        };
+
         let variants = match data {
             ast::Data::Enum(variants) => variants.clone(),
             ast::Data::Struct(fields) => vec![Variant::from_struct(fields.clone())],
         };
         let id_type: TokenStream;
+        let id_ctx: TokenStream;
         if data.is_struct() {
             id_type = match &self.id_type {
                 None => quote!(()),
                 _ => Error::unknown_field("id_type").write_errors(),
+            };
+            id_ctx = match &self.id_ctx.encode() {
+                Some(_) => Error::unknown_field("id_ctx").write_errors(),
+                _ => quote!(()),
             };
         } else {
             id_type = match &self.id_type {
                 Some(id_type) => id_type.parse().unwrap_or_else(|e| e.to_compile_error()),
                 _ => Error::missing_field("id_type").write_errors(),
             };
+            id_ctx = match &self.id_ctx.encode() {
+                Some(id_ctx) => id_ctx.parse().unwrap_or_else(|e| e.to_compile_error()),
+                None => quote!(()),
+            };
         }
         let variant_arms = variants.into_iter().map(|var| {
-            var.generate_encode_arm(&crate_path, &id_type, &writer_binding)
+            var.generate_encode_arm(&crate_path, &id_type, &id_ctx, &writer_binding)
                 .map(ToTokens::into_token_stream)
                 .unwrap_or_else(Error::write_errors)
         });
 
         Ok(parse_quote! {
-            impl #impl_generics #crate_path::Encode<()> for #ident #ty_generics
+            impl #impl_generics #crate_path::Encode<#ctx_type> for #ident #ty_generics
                 #where_clause
             {
-                fn encode<W>(&self, _: (), #writer_binding: &mut W)
+                fn encode<W>(&self, #ctx_pat: #ctx_type, #writer_binding: &mut W)
                     -> Result<(), #crate_path::export::io::Error>
                 where
                     W: #crate_path::export::io::Write,
@@ -107,23 +151,58 @@ impl Container {
         let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
         let reader_binding: syn::Ident = parse_quote!(reader);
 
+        let ctx_parts: Punctuated<syn::FnArg, Token![,]> = self
+            .ctx
+            .decode()
+            .map(|lit| lit.parse_with(Punctuated::parse_terminated))
+            .transpose()
+            .map_err(Error::custom)?
+            .unwrap_or_else(Punctuated::new);
+
+        let ctx_parts: Vec<syn::PatType> = ctx_parts
+            .into_iter()
+            .map(|pat| {
+                if let syn::FnArg::Typed(pat_type) = pat {
+                    Ok(pat_type)
+                } else {
+                    Err(Error::custom("expected a typed pattern, like `foo: i64`"))
+                }
+            })
+            .collect::<Result<_, _>>()?;
+
+        let ctx_pats = ctx_parts.iter().map(|pat_type| &pat_type.pat);
+        let ctx_pat: syn::Pat = parse_quote! {
+            ( #( #ctx_pats , )* )
+        };
+
+        let ctx_types = ctx_parts.iter().map(|pat_type| &pat_type.ty);
+        let ctx_type: syn::Type = parse_quote! {
+            ( #( #ctx_types , )* )
+        };
+
         let id_expr: TokenStream;
-        let id_type: TokenStream;
         if data.is_struct() {
             id_expr = match &self.id {
                 None => quote!(()),
                 _ => Error::unknown_field("id").write_errors(),
             };
+            if self.id_ctx.decode().is_some() {
+                return Err(Error::unknown_field("id_ctx"));
+            }
         } else {
-            id_type = match &self.id_type {
+            let id_type: TokenStream = match &self.id_type {
                 Some(id_type) => id_type.parse().unwrap_or_else(|e| e.to_compile_error()),
                 _ => Error::missing_field("id_type").write_errors(),
+            };
+            let id_ctx: TokenStream = match self.id_ctx.decode() {
+                Some(id_ctx) => id_ctx.parse().unwrap_or_else(|e| e.to_compile_error()),
+                None => quote!(()),
             };
             id_expr = match &self.id {
                 Some(id) => id.parse().unwrap_or_else(|e| e.to_compile_error()),
                 None => {
                     quote! {
-                        <#id_type as #crate_path::Decode>::decode((), #reader_binding)?
+                        <#id_type as #crate_path::Decode<_>>::decode(#id_ctx, #reader_binding)?
                     }
                 }
             };
@@ -140,10 +219,10 @@ impl Container {
         });
 
         Ok(parse_quote! {
-            impl #impl_generics #crate_path::Decode<()> for #ident #ty_generics
+            impl #impl_generics #crate_path::Decode<#ctx_type> for #ident #ty_generics
                 #where_clause
         {
-                fn decode<R>(_: (), #reader_binding: &mut R)
+                fn decode<R>(#ctx_pat: #ctx_type, #reader_binding: &mut R)
                     -> Result<Self, #crate_path::export::io::Error>
                 where
                     R: #crate_path::export::io::Read,
@@ -192,6 +271,7 @@ impl Variant {
         &self,
         crate_path: &syn::Path,
         id_type: &TokenStream,
+        id_ctx: &TokenStream,
         writer_binding: &syn::Ident,
     ) -> Result<syn::Arm, Error> {
         let Self {
@@ -236,7 +316,7 @@ impl Variant {
 
         Ok(parse_quote! {
             #path #pat_fields => {
-                <#id_type as #crate_path::Encode>::encode(&(#id_expr), (), #writer_binding)?;
+                <#id_type as #crate_path::Encode<_>>::encode(&(#id_expr), #id_ctx, #writer_binding)?;
                 #( #field_encoders ?; )*
                 Ok(())
             }
@@ -311,6 +391,9 @@ struct Field {
     ty: syn::Type,
 
     #[darling(default)]
+    ctx: Asym<syn::LitStr>,
+
+    #[darling(default)]
     with: Option<syn::Path>,
 
     #[darling(default)]
@@ -333,41 +416,23 @@ impl Field {
         binding: &syn::Ident,
         writer_binding: &syn::Ident,
     ) -> Result<syn::Expr, Error> {
-        let Self {
-            ty,
-            with,
-            encode_with,
-            ..
-        } = self;
-        match (with, encode_with) {
+        let Self { ty, .. } = self;
+
+        let ctx: TokenStream = self
+            .ctx
+            .encode()
+            .map(|lit| lit.parse().unwrap_or_else(|e| e.to_compile_error()))
+            .unwrap_or_else(|| quote!(()));
+
+        match (&self.with, &self.encode_with) {
             (None, None) => Ok(
-                parse_quote! { <#ty as #crate_path::Encode>::encode(#binding, (), #writer_binding) },
+                parse_quote! { <#ty as #crate_path::Encode<_>>::encode(#binding, #ctx, #writer_binding) },
             ),
             (Some(with), None) => {
-                Ok(parse_quote!({
-                    // sanitize scope
-                    fn __encode<__W>(__val: &#ty, _: (), __writer: &mut __W)
-                        -> Result<(), #crate_path::export::io::Error>
-                    where
-                        __W: #crate_path::export::io::Write,
-                    {
-                        #with::encode(__val, (), __writer)
-                    }
-                    __encode(#binding, (), #writer_binding)
-                }))
+                Ok(parse_quote! { #with::encode(#binding, #ctx, #writer_binding) })
             }
             (None, Some(encode_with)) => {
-                Ok(parse_quote!({
-                    // sanitize scope
-                    fn __encode<__W>(__val: &#ty, _: (), __writer: &mut __W)
-                        -> Result<(), #crate_path::export::io::Error>
-                    where
-                        __W: #crate_path::export::io::Write,
-                    {
-                        #encode_with(__val, (), __writer)
-                    }
-                    __encode(#binding, (), #writer_binding)
-                }))
+                Ok(parse_quote! { #encode_with(#binding, #ctx, #writer_binding) })
             }
             _ => Err(Error::custom(
                 "conflicting fields: `with` and `encode_with`",
@@ -380,45 +445,103 @@ impl Field {
         crate_path: &syn::Path,
         reader_binding: &syn::Ident,
     ) -> Result<syn::Expr, Error> {
-        let Self {
-            ty,
-            with,
-            decode_with,
-            ..
-        } = self;
-        match (with, decode_with) {
+        let Self { ty, .. } = self;
+
+        let ctx: TokenStream = self
+            .ctx
+            .decode()
+            .map(|lit| lit.parse().unwrap_or_else(|e| e.to_compile_error()))
+            .unwrap_or_else(|| quote!(()));
+
+        match (&self.with, &self.decode_with) {
             (None, None) => {
-                Ok(parse_quote! { <#ty as #crate_path::Decode>::decode((), #reader_binding) })
+                Ok(parse_quote! { <#ty as #crate_path::Decode<_>>::decode(#ctx, #reader_binding) })
             }
-            (Some(with), None) => {
-                Ok(parse_quote!({
-                    // sanitize scope
-                    fn __decode<__R>(_: (), __reader: &mut __R)
-                        -> Result<#ty, #crate_path::export::io::Error>
-                    where
-                        __R: #crate_path::export::io::Read,
-                    {
-                        #with::decode((), __reader)
-                    }
-                    __decode((), #reader_binding)
-                }))
-            }
-            (None, Some(decode_with)) => {
-                Ok(parse_quote!({
-                    // sanitize scope
-                    fn __decode<__R>(_: (), __reader: &mut __R)
-                        -> Result<#ty, #crate_path::export::io::Error>
-                    where
-                        __R: #crate_path::export::io::Read,
-                    {
-                        #decode_with((), __reader)
-                    }
-                    __decode((), #reader_binding)
-                }))
-            }
+            (Some(with), None) => Ok(parse_quote! { #with::decode(#ctx, #reader_binding) }),
+            (None, Some(decode_with)) => Ok(parse_quote! { #decode_with(#ctx, #reader_binding) }),
             _ => Err(Error::custom(
                 "conflicting fields: `with` and `decode_with`",
             )),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Asym<T> {
+    Single(T),
+    Multi {
+        encode: Option<T>,
+        decode: Option<T>,
+    },
+}
+
+impl<T> Asym<T> {
+    fn encode(&self) -> Option<&T> {
+        match self {
+            Self::Single(val) => Some(val),
+            Self::Multi { encode, .. } => encode.as_ref(),
+        }
+    }
+
+    fn decode(&self) -> Option<&T> {
+        match self {
+            Self::Single(val) => Some(val),
+            Self::Multi { decode, .. } => decode.as_ref(),
+        }
+    }
+}
+
+impl<T> FromMeta for Asym<T>
+where
+    T: FromMeta + std::fmt::Debug,
+{
+    fn from_meta(item: &syn::Meta) -> Result<Self, Error> {
+        match item {
+            syn::Meta::List(value) => {
+                Self::from_list(&value.nested.iter().cloned().collect::<Vec<_>>())
+            }
+            _ => T::from_meta(item).map(Self::Single),
+        }
+    }
+
+    fn from_list(items: &[syn::NestedMeta]) -> Result<Self, Error> {
+        let mut encode = None;
+        let mut decode = None;
+
+        let encode_path: syn::Path = parse_quote!(encode);
+        let decode_path: syn::Path = parse_quote!(decode);
+
+        for item in items {
+            match item {
+                syn::NestedMeta::Meta(meta) => match meta.path() {
+                    path if *path == encode_path => {
+                        if encode.is_none() {
+                            encode = Some(T::from_meta(meta)?);
+                        } else {
+                            return Err(Error::duplicate_field_path(path));
+                        }
+                    }
+                    path if *path == decode_path => {
+                        if decode.is_none() {
+                            decode = Some(T::from_meta(meta)?);
+                        } else {
+                            return Err(Error::duplicate_field_path(path));
+                        }
+                    }
+                    other => return Err(Error::unknown_field_path(other)),
+                },
+                syn::NestedMeta::Lit(..) => return Err(Error::unsupported_format("literal")),
+            }
+        }
+        Ok(Self::Multi { encode, decode })
+    }
+}
+
+impl<T> Default for Asym<T> {
+    fn default() -> Self {
+        Self::Multi {
+            encode: None,
+            decode: None,
         }
     }
 }
