@@ -137,7 +137,7 @@ where
 
 impl<'a, T, Ctx> Encode<Ctx> for Cow<'a, T>
 where
-    T: Encode<Ctx> + ToOwned,
+    T: Encode<Ctx> + ToOwned + ?Sized,
 {
     /// Borrows a value of type `T` and encodes it.
     fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
@@ -150,7 +150,7 @@ where
 
 impl<'a, T, Ctx> Decode<Ctx> for Cow<'a, T>
 where
-    T: ToOwned,
+    T: ToOwned + ?Sized,
     T::Owned: Decode<Ctx>,
 {
     /// Decodes a value of type `T::Owned`.
