@@ -352,10 +352,15 @@ impl Variant {
             id_pat = parse_quote!(id if id == #id_expr)
         }
 
-        let cons_fields_inner = fields
-            .iter()
-            .enumerate()
-            .map(|(index, field)| field.ident(index));
+        let cons_fields_inner = fields.iter().enumerate().map(|(index, field)| {
+            let binding = field.ident(index);
+            let owned_binding = format_ident!("__owned_{}", binding);
+            match fields.style {
+                ast::Style::Tuple => quote!(#owned_binding),
+                ast::Style::Struct => quote!(#binding: #owned_binding),
+                ast::Style::Unit => unreachable!(),
+            }
+        });
         let cons_fields = match fields.style {
             ast::Style::Tuple => quote! {
                 ( #( #cons_fields_inner, )* )
@@ -367,12 +372,19 @@ impl Variant {
         };
 
         let field_decoders = fields.iter().enumerate().map(|(index, field)| {
+            // used for parity with encode - public bindings must have same type, and encode must
+            // take by reference, so make a reference here as well.
             let binding = field.ident(index);
+            let owned_binding = format_ident!("__owned_{}", binding);
             let decoder = field
                 .generate_decoder(&crate_path, reader_binding)
                 .map(ToTokens::into_token_stream)
                 .unwrap_or_else(Error::write_errors);
-            quote! { let #binding = #decoder ?; }
+            quote! {
+                let #owned_binding = #decoder ?;
+                #[allow(unused_variables)]
+                let #binding = &#owned_binding;
+            }
         });
 
         Ok(parse_quote! {
