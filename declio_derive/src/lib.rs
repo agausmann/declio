@@ -444,14 +444,15 @@ impl VariantData {
             }
         });
 
-        let field_ident = self.fields.iter().map(|field| &field.public_ref_ident);
-        let field_encoder = self.fields.iter().map(|field| &field.encoder);
-        let field_encode_ctx = self.fields.iter().map(|field| &field.encode_ctx);
+        let field_encode_expr = self
+            .fields
+            .iter()
+            .map(|field| field.encode_expr(writer_binding));
 
         parse_quote! {
             #path #pat_fields => {
                 #id_encode_stmt
-                #( #field_encoder(#field_ident, #field_encode_ctx, #writer_binding)?; )*
+                #( #field_encode_expr; )*
                 Ok(())
             }
         }
@@ -462,8 +463,10 @@ impl VariantData {
 
         let private_owned_ident = self.fields.iter().map(|field| &field.private_owned_ident);
         let public_ref_ident = self.fields.iter().map(|field| &field.public_ref_ident);
-        let field_decoder = self.fields.iter().map(|field| &field.decoder);
-        let field_decode_ctx = self.fields.iter().map(|field| &field.decode_ctx);
+        let field_decode_expr = self
+            .fields
+            .iter()
+            .map(|field| field.decode_expr(reader_binding));
 
         let path: syn::Path = match &self.ident {
             Some(ident) => parse_quote!(Self::#ident),
@@ -490,7 +493,7 @@ impl VariantData {
         parse_quote! {
             #id_pat => {
                 #(
-                    let #private_owned_ident = #field_decoder(#field_decode_ctx, #reader_binding)?;
+                    let #private_owned_ident = #field_decode_expr;
                     #[allow(unused_variables)]
                     let #public_ref_ident = &#private_owned_ident;
                 )*
@@ -517,6 +520,9 @@ struct FieldReceiver {
 
     #[darling(default)]
     decode_with: Option<syn::Path>,
+
+    #[darling(default)]
+    skip_if: Option<syn::LitStr>,
 }
 
 struct FieldData {
@@ -527,6 +533,7 @@ struct FieldData {
     decode_ctx: syn::Expr,
     encoder: syn::Expr,
     decoder: syn::Expr,
+    skip_if: Option<syn::Expr>,
 }
 
 impl FieldReceiver {
@@ -587,6 +594,17 @@ impl FieldReceiver {
             }
         };
 
+        let skip_if = match &self.skip_if {
+            Some(lit) => match lit.parse() {
+                Ok(expr) => Some(expr),
+                Err(error) => {
+                    errors.push(from_syn_error(error));
+                    Some(parse_quote!(unreachable!("compile error")))
+                }
+            },
+            None => None,
+        };
+
         if errors.is_empty() {
             Ok(FieldData {
                 stored_ident,
@@ -596,9 +614,55 @@ impl FieldReceiver {
                 decode_ctx,
                 encoder,
                 decoder,
+                skip_if,
             })
         } else {
             Err(Error::multiple(errors))
+        }
+    }
+}
+
+impl FieldData {
+    fn encode_expr(&self, writer_binding: &syn::Ident) -> syn::Expr {
+        let Self {
+            public_ref_ident,
+            encoder,
+            encode_ctx,
+            ..
+        } = self;
+        let raw_encoder: syn::Expr = parse_quote! {
+            #encoder(#public_ref_ident, #encode_ctx, #writer_binding)?
+        };
+        match &self.skip_if {
+            Some(skip_if) => parse_quote! {
+                if #skip_if {
+                    ()
+                } else {
+                    #raw_encoder
+                }
+            },
+            None => raw_encoder,
+        }
+    }
+
+    fn decode_expr(&self, reader_binding: &syn::Ident) -> syn::Expr {
+        let Self {
+            decode_ctx,
+            decoder,
+            ..
+        } = self;
+        let raw_decoder: syn::Expr = parse_quote! {
+            #decoder(#decode_ctx, #reader_binding)?
+        };
+        match &self.skip_if {
+            Some(skip_if) => parse_quote! {
+                if #skip_if {
+                    Default::default()
+                } else {
+                    #raw_decoder
+                }
+            },
+            None => raw_decoder,
         }
     }
 }

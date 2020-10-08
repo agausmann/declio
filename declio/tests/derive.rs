@@ -57,6 +57,13 @@ enum IdCtx {
     Bar,
 }
 
+#[derive(Debug, PartialEq, Encode, Decode)]
+struct SkipIf {
+    x: u8,
+    #[declio(skip_if = "*x == 8")]
+    y: Option<u32>,
+}
+
 mod big_endian {
     use super::*;
 
@@ -183,4 +190,10 @@ fn container_ctx() {
 #[test]
 fn id_ctx() {
     test_bidir(IdCtx::Bar, &[0x00, 0x01]);
+}
+
+#[test]
+fn skip_if() {
+    test_bidir(SkipIf { x: 8, y: None }, &[0x08]);
+    test_bidir(SkipIf { x: 7, y: Some(2) }, &[0x07, 0x02, 0x00, 0x00, 0x00]);
 }
