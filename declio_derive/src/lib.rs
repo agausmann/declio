@@ -1,5 +1,5 @@
 use darling::{ast, Error, FromDeriveInput, FromField, FromMeta, FromVariant};
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::punctuated::Punctuated;
 use syn::{parse_macro_input, parse_quote, DeriveInput, Token};
@@ -7,29 +7,29 @@ use syn::{parse_macro_input, parse_quote, DeriveInput, Token};
 #[proc_macro_derive(Encode, attributes(declio))]
 pub fn derive_encode(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    Container::from_derive_input(&input)
-        .and_then(|c| c.impl_encode())
-        .map(ToTokens::into_token_stream)
-        .unwrap_or_else(Error::write_errors)
+    ContainerReceiver::from_derive_input(&input)
+        .and_then(|receiver| receiver.validate())
+        .map(|data| data.encode_impl().into_token_stream())
+        .unwrap_or_else(|error| error.write_errors())
         .into()
 }
 
 #[proc_macro_derive(Decode, attributes(declio))]
 pub fn derive_decode(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    Container::from_derive_input(&input)
-        .and_then(|c| c.impl_decode())
-        .map(ToTokens::into_token_stream)
-        .unwrap_or_else(Error::write_errors)
+    ContainerReceiver::from_derive_input(&input)
+        .and_then(|receiver| receiver.validate())
+        .map(|data| data.decode_impl().into_token_stream())
+        .unwrap_or_else(|error| error.write_errors())
         .into()
 }
 
 #[derive(FromDeriveInput)]
 #[darling(attributes(declio))]
-struct Container {
+struct ContainerReceiver {
     ident: syn::Ident,
     generics: syn::Generics,
-    data: ast::Data<Variant, Field>,
+    data: ast::Data<VariantReceiver, FieldReceiver>,
 
     #[darling(default)]
     crate_path: Option<syn::Path>,
@@ -38,7 +38,7 @@ struct Container {
     ctx: Asym<syn::LitStr>,
 
     #[darling(default)]
-    id: Option<syn::LitStr>,
+    id_expr: Option<syn::LitStr>,
 
     #[darling(default)]
     id_type: Option<syn::LitStr>,
@@ -47,358 +47,462 @@ struct Container {
     id_ctx: Asym<syn::LitStr>,
 }
 
-impl Container {
-    fn impl_encode(&self) -> Result<syn::ItemImpl, Error> {
+struct ContainerData {
+    ident: syn::Ident,
+    generics: syn::Generics,
+    crate_path: syn::Path,
+    encode_ctx_pat: syn::Pat,
+    decode_ctx_pat: syn::Pat,
+    encode_ctx_type: syn::Type,
+    decode_ctx_type: syn::Type,
+    id_encode_ctx: syn::Expr,
+    id_decode_ctx: syn::Expr,
+    id_encoder: Option<syn::TypePath>,
+    id_decoder: Option<syn::TypePath>,
+    id_decode_expr: Option<syn::Expr>,
+    variants: Vec<VariantData>,
+}
+
+impl ContainerReceiver {
+    fn validate(&self) -> Result<ContainerData, Error> {
+        let mut errors = Vec::new();
+
+        let ident = self.ident.clone();
+        let generics = self.generics.clone();
+        let crate_path = self
+            .crate_path
+            .clone()
+            .unwrap_or_else(|| parse_quote!(declio));
+
+        let mut parse_ctx = |arg: Option<&syn::LitStr>| match arg {
+            None => (parse_quote!(_), parse_quote!(())),
+            Some(lit) => {
+                let parts: Punctuated<syn::FnArg, Token![,]> =
+                    match lit.parse_with(Punctuated::parse_terminated) {
+                        Ok(punct) => punct,
+                        Err(error) => {
+                            errors.push(from_syn_error(error));
+                            Punctuated::new()
+                        }
+                    };
+
+                let parts: Vec<_> = parts
+                    .into_iter()
+                    .flat_map(|fn_arg| match fn_arg {
+                        syn::FnArg::Typed(pat_type) => Some((pat_type.pat, pat_type.ty)),
+                        _ => {
+                            errors.push(
+                                Error::custom("expected name and type, like `foo: i64`")
+                                    .with_span(&fn_arg),
+                            );
+                            None
+                        }
+                    })
+                    .collect();
+
+                let pats = parts.iter().map(|(pat, _)| pat);
+                let types = parts.iter().map(|(_, ty)| ty);
+
+                // Special case: single context variable gets to be not-a-tuple.
+                if parts.len() == 1 {
+                    (parse_quote!( #( #pats )* ), parse_quote!( #( #types )* ))
+                } else {
+                    (
+                        parse_quote!( ( #( #pats , )* ) ),
+                        parse_quote!( ( #( #types , )* ) ),
+                    )
+                }
+            }
+        };
+
+        let (encode_ctx_pat, encode_ctx_type) = parse_ctx(self.ctx.encode());
+        let (decode_ctx_pat, decode_ctx_type) = parse_ctx(self.ctx.decode());
+
+        let (id_encoder, id_decoder, id_decode_expr) = match (&self.id_expr, &self.id_type) {
+            (None, None) => (None, None, Some(parse_quote!(()))),
+            (Some(lit), None) => {
+                let expr: syn::Expr = match lit.parse() {
+                    Ok(expr) => expr,
+                    Err(error) => {
+                        errors.push(from_syn_error(error));
+                        parse_quote!(unreachable!("compile error"))
+                    }
+                };
+                (None, None, Some(expr))
+            }
+            (None, Some(lit)) => {
+                let ty: syn::Type = match lit.parse() {
+                    Ok(ty) => ty,
+                    Err(error) => {
+                        errors.push(from_syn_error(error));
+                        parse_quote!(())
+                    }
+                };
+                (
+                    Some(parse_quote!( <#ty as #crate_path::Encode<_>>::encode )),
+                    Some(parse_quote!( <#ty as #crate_path::Decode<_>>::decode )),
+                    None,
+                )
+            }
+            (Some(..), Some(..)) => {
+                errors.push(Error::custom(
+                    "`id_expr` and `id_type` are incompatible with each other",
+                ));
+                (None, None, None)
+            }
+        };
+
+        let mut parse_id_ctx = |arg: Option<&syn::LitStr>| match arg {
+            None => parse_quote!(()),
+            Some(lit) => match lit.parse() {
+                Ok(expr) => expr,
+                Err(error) => {
+                    errors.push(from_syn_error(error));
+                    parse_quote!(unreachable!("compile error"))
+                }
+            },
+        };
+
+        let id_encode_ctx = parse_id_ctx(self.id_ctx.encode());
+        let id_decode_ctx = parse_id_ctx(self.id_ctx.decode());
+
+        if self.data.is_struct() && self.id_expr.is_some() {
+            errors.push(Error::unknown_field("id_expr"));
+        }
+        if self.data.is_struct() && self.id_type.is_some() {
+            errors.push(Error::unknown_field("id_type"));
+        }
+        if self.data.is_enum() && self.id_expr.is_none() && self.id_type.is_none() {
+            errors.push(Error::custom(
+                "either `id_expr` or `id_type` is required for enums",
+            ));
+        }
+
+        let variants = match &self.data {
+            ast::Data::Enum(variants) => variants
+                .iter()
+                .flat_map(|variant| match variant.validate(&crate_path) {
+                    Ok(data) => Some(data),
+                    Err(error) => {
+                        errors.push(error);
+                        None
+                    }
+                })
+                .collect(),
+            ast::Data::Struct(fields) => match VariantData::from_struct(fields, &crate_path) {
+                Ok(data) => vec![data],
+                Err(error) => {
+                    errors.push(error);
+                    vec![]
+                }
+            },
+        };
+
+        if errors.is_empty() {
+            Ok(ContainerData {
+                ident,
+                generics,
+                crate_path,
+                encode_ctx_pat,
+                decode_ctx_pat,
+                encode_ctx_type,
+                decode_ctx_type,
+                id_encode_ctx,
+                id_decode_ctx,
+                id_encoder,
+                id_decoder,
+                id_decode_expr,
+                variants,
+            })
+        } else {
+            Err(Error::multiple(errors))
+        }
+    }
+}
+
+impl ContainerData {
+    fn encode_impl(&self) -> syn::ItemImpl {
         let Self {
             ident,
-            generics,
-            data,
             crate_path,
+            encode_ctx_pat,
+            encode_ctx_type,
             ..
         } = self;
+        let (impl_generics, ident_generics, where_clause) = self.generics.split_for_impl();
+        let writer_binding: syn::Ident = parse_quote!(__declio_writer);
 
-        let crate_path = crate_path.clone().unwrap_or_else(|| parse_quote!(declio));
-        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-        let writer_binding: syn::Ident = parse_quote!(writer);
-
-        let ctx_parts: Punctuated<syn::FnArg, Token![,]> = self
-            .ctx
-            .encode()
-            .map(|lit| lit.parse_with(Punctuated::parse_terminated))
-            .transpose()
-            .map_err(Error::custom)?
-            .unwrap_or_else(Punctuated::new);
-
-        let ctx_parts: Vec<syn::PatType> = ctx_parts
-            .into_iter()
-            .map(|pat| {
-                if let syn::FnArg::Typed(pat_type) = pat {
-                    Ok(pat_type)
-                } else {
-                    Err(Error::custom("expected a typed pattern, like `foo: i64`"))
-                }
-            })
-            .collect::<Result<_, _>>()?;
-
-        let ctx_pats = ctx_parts.iter().map(|pat_type| &pat_type.pat);
-        let ctx_pat: syn::Pat = parse_quote! {
-            ( #( #ctx_pats , )* )
-        };
-
-        let ctx_types = ctx_parts.iter().map(|pat_type| &pat_type.ty);
-        let ctx_type: syn::Type = parse_quote! {
-            ( #( #ctx_types , )* )
-        };
-
-        let variants = match data {
-            ast::Data::Enum(variants) => variants.clone(),
-            ast::Data::Struct(fields) => vec![Variant::from_struct(fields.clone())],
-        };
-        let id_type: TokenStream;
-        let id_ctx: TokenStream;
-        if data.is_struct() {
-            id_type = match &self.id_type {
-                None => quote!(()),
-                _ => Error::unknown_field("id_type").write_errors(),
-            };
-            id_ctx = match &self.id_ctx.encode() {
-                Some(_) => Error::unknown_field("id_ctx").write_errors(),
-                _ => quote!(()),
-            };
-        } else {
-            id_type = match &self.id_type {
-                Some(id_type) => id_type.parse().unwrap_or_else(|e| e.to_compile_error()),
-                _ => Error::missing_field("id_type").write_errors(),
-            };
-            id_ctx = match &self.id_ctx.encode() {
-                Some(id_ctx) => id_ctx.parse().unwrap_or_else(|e| e.to_compile_error()),
-                None => quote!(()),
-            };
-        }
-        let variant_arms = variants.into_iter().map(|var| {
-            var.generate_encode_arm(&crate_path, &id_type, &id_ctx, &writer_binding)
-                .map(ToTokens::into_token_stream)
-                .unwrap_or_else(Error::write_errors)
+        let variant_arm = self.variants.iter().map(|variant| {
+            variant.encode_arm(
+                self.id_encoder.as_ref(),
+                &self.id_encode_ctx,
+                &writer_binding,
+            )
         });
 
-        Ok(parse_quote! {
-            impl #impl_generics #crate_path::Encode<#ctx_type> for #ident #ty_generics
+        parse_quote! {
+            #[allow(non_shorthand_field_patterns)]
+            impl #impl_generics #crate_path::Encode<#encode_ctx_type> for #ident #ident_generics
                 #where_clause
             {
-                fn encode<W>(&self, #ctx_pat: #ctx_type, #writer_binding: &mut W)
+                fn encode<W>(&self, #encode_ctx_pat: #encode_ctx_type, #writer_binding: &mut W)
                     -> Result<(), #crate_path::export::io::Error>
                 where
                     W: #crate_path::export::io::Write,
                 {
                     match self {
-                        #( #variant_arms )*
+                        #( #variant_arm, )*
                     }
                 }
             }
-        })
+        }
     }
 
-    fn impl_decode(&self) -> Result<syn::ItemImpl, Error> {
+    fn decode_impl(&self) -> syn::ItemImpl {
         let Self {
             ident,
-            generics,
-            data,
             crate_path,
+            decode_ctx_pat,
+            decode_ctx_type,
             ..
         } = self;
+        let Self {
+            id_decoder,
+            id_decode_ctx,
+            id_decode_expr,
+            ..
+        } = self;
+        let (impl_generics, ident_generics, where_clause) = self.generics.split_for_impl();
+        let reader_binding: syn::Ident = parse_quote!(__declio_reader);
 
-        let crate_path = crate_path.clone().unwrap_or_else(|| parse_quote!(declio));
-        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-        let reader_binding: syn::Ident = parse_quote!(reader);
+        let variant_arm = self
+            .variants
+            .iter()
+            .map(|variant| variant.decode_arm(&reader_binding));
 
-        let ctx_parts: Punctuated<syn::FnArg, Token![,]> = self
-            .ctx
-            .decode()
-            .map(|lit| lit.parse_with(Punctuated::parse_terminated))
-            .transpose()
-            .map_err(Error::custom)?
-            .unwrap_or_else(Punctuated::new);
-
-        let ctx_parts: Vec<syn::PatType> = ctx_parts
-            .into_iter()
-            .map(|pat| {
-                if let syn::FnArg::Typed(pat_type) = pat {
-                    Ok(pat_type)
-                } else {
-                    Err(Error::custom("expected a typed pattern, like `foo: i64`"))
-                }
-            })
-            .collect::<Result<_, _>>()?;
-
-        let ctx_pats = ctx_parts.iter().map(|pat_type| &pat_type.pat);
-        let ctx_pat: syn::Pat = parse_quote! {
-            ( #( #ctx_pats , )* )
+        let id_decode_expr = match (id_decoder, id_decode_expr) {
+            (Some(decoder), None) => quote!(#decoder(#id_decode_ctx, #reader_binding)?),
+            (None, Some(decode_expr)) => quote!(#decode_expr),
+            _ => unreachable!(),
         };
 
-        let ctx_types = ctx_parts.iter().map(|pat_type| &pat_type.ty);
-        let ctx_type: syn::Type = parse_quote! {
-            ( #( #ctx_types , )* )
-        };
-
-        let id_expr: TokenStream;
-        if data.is_struct() {
-            id_expr = match &self.id {
-                None => quote!(()),
-                _ => Error::unknown_field("id").write_errors(),
-            };
-            if self.id_ctx.decode().is_some() {
-                return Err(Error::unknown_field("id_ctx"));
-            }
-        } else {
-            let id_type: TokenStream = match &self.id_type {
-                Some(id_type) => id_type.parse().unwrap_or_else(|e| e.to_compile_error()),
-                _ => Error::missing_field("id_type").write_errors(),
-            };
-            let id_ctx: TokenStream = match self.id_ctx.decode() {
-                Some(id_ctx) => id_ctx.parse().unwrap_or_else(|e| e.to_compile_error()),
-                None => quote!(()),
-            };
-            id_expr = match &self.id {
-                Some(id) => id.parse().unwrap_or_else(|e| e.to_compile_error()),
-                None => {
-                    quote! {
-                        <#id_type as #crate_path::Decode<_>>::decode(#id_ctx, #reader_binding)?
-                    }
-                }
-            };
-        }
-
-        let variants = match data {
-            ast::Data::Enum(variants) => variants.clone(),
-            ast::Data::Struct(fields) => vec![Variant::from_struct(fields.clone())],
-        };
-        let variant_arms = variants.into_iter().map(|var| {
-            var.generate_decode_arm(&crate_path, &reader_binding)
-                .map(ToTokens::into_token_stream)
-                .unwrap_or_else(Error::write_errors)
-        });
-
-        Ok(parse_quote! {
-            impl #impl_generics #crate_path::Decode<#ctx_type> for #ident #ty_generics
+        parse_quote! {
+            impl #impl_generics #crate_path::Decode<#decode_ctx_type> for #ident #ident_generics
                 #where_clause
-        {
-                fn decode<R>(#ctx_pat: #ctx_type, #reader_binding: &mut R)
+            {
+                fn decode<R>(#decode_ctx_pat: #decode_ctx_type, #reader_binding: &mut R)
                     -> Result<Self, #crate_path::export::io::Error>
                 where
                     R: #crate_path::export::io::Read,
                 {
-                    let id = #id_expr;
-                    match id {
-                        #( #variant_arms )*
+                    match #id_decode_expr {
+                        #( #variant_arm )*
                         _ => Err(#crate_path::export::io::Error::new(
                             #crate_path::export::io::ErrorKind::InvalidData,
-                            "unknown id"
-                        ))
+                            "unknown id value",
+                        )),
                     }
                 }
             }
-        })
+        }
     }
 }
 
-#[derive(Clone, FromVariant)]
+#[derive(FromVariant)]
 #[darling(attributes(declio))]
-struct Variant {
+struct VariantReceiver {
     ident: syn::Ident,
-    fields: ast::Fields<Field>,
-
-    #[darling(skip)]
-    from_struct: bool,
+    fields: ast::Fields<FieldReceiver>,
 
     id: syn::LitStr,
 }
 
-impl Variant {
-    fn from_struct(fields: ast::Fields<Field>) -> Self {
-        Self {
-            ident: parse_quote!(__declio_unused),
-            fields,
-            from_struct: true,
-            id: syn::LitStr::new("()", Span::call_site()),
-        }
-    }
+struct VariantData {
+    ident: Option<syn::Ident>,
+    id_expr: syn::Expr,
+    // would be syn::Pat, but guards aren't first-class patterns, just a feature of `match` arms.
+    id_pat: TokenStream,
+    style: ast::Style,
+    fields: Vec<FieldData>,
+}
 
-    fn id_expr(&self) -> Result<syn::Expr, Error> {
-        self.id.parse().map_err(Error::custom)
-    }
+impl VariantReceiver {
+    fn validate(&self, crate_path: &syn::Path) -> Result<VariantData, Error> {
+        let mut errors = Vec::new();
 
-    fn generate_encode_arm(
-        &self,
-        crate_path: &syn::Path,
-        id_type: &TokenStream,
-        id_ctx: &TokenStream,
-        writer_binding: &syn::Ident,
-    ) -> Result<syn::Arm, Error> {
-        let Self {
-            ident,
-            fields,
-            from_struct,
-            ..
-        } = self;
+        let ident = Some(self.ident.clone());
 
-        let id_expr = self
-            .id_expr()
-            .map(ToTokens::into_token_stream)
-            .unwrap_or_else(Error::write_errors);
+        let id_expr: syn::Expr = match self.id.parse() {
+            Ok(expr) => expr,
+            Err(error) => {
+                errors.push(from_syn_error(error));
+                parse_quote!(unreachable!("compile error"))
+            }
+        };
 
-        let path: syn::Path;
-        if *from_struct {
-            path = parse_quote!(Self);
-        } else {
-            path = parse_quote!(Self::#ident);
-        }
+        let id_pat = parse_quote!(__declio_id if __declio_id == #id_expr);
 
-        let pat_fields_inner = fields
+        let style = self.fields.style;
+
+        let fields = self
+            .fields
             .iter()
             .enumerate()
-            .map(|(index, field)| field.ident(index));
-        let pat_fields = match fields.style {
-            ast::Style::Tuple => quote! {
-                ( #( #pat_fields_inner, )* )
-            },
-            ast::Style::Struct => quote! {
-                { #( #pat_fields_inner, )* }
-            },
-            ast::Style::Unit => quote! {},
-        };
+            .flat_map(|(index, field)| match field.validate(crate_path, index) {
+                Ok(field) => Some(field),
+                Err(error) => {
+                    errors.push(error);
+                    None
+                }
+            })
+            .collect();
 
-        let field_encoders = fields.iter().enumerate().map(|(index, field)| {
-            field
-                .generate_encoder(&crate_path, &field.ident(index), writer_binding)
-                .map(ToTokens::into_token_stream)
-                .unwrap_or_else(Error::write_errors)
-        });
-
-        Ok(parse_quote! {
-            #path #pat_fields => {
-                <#id_type as #crate_path::Encode<_>>::encode(&(#id_expr), #id_ctx, #writer_binding)?;
-                #( #field_encoders ?; )*
-                Ok(())
-            }
-        })
-    }
-
-    fn generate_decode_arm(
-        &self,
-        crate_path: &syn::Path,
-        reader_binding: &syn::Ident,
-    ) -> Result<syn::Arm, Error> {
-        let Self {
-            ident,
-            fields,
-            from_struct,
-            ..
-        } = self;
-
-        let id_expr = self
-            .id_expr()
-            .map(ToTokens::into_token_stream)
-            .unwrap_or_else(Error::write_errors);
-
-        let path: syn::Path;
-        // XXX: would be syn::Pat, but guards aren't first-class patterns,
-        // only supported as part of a match arm.
-        let id_pat: TokenStream;
-        if *from_struct {
-            path = parse_quote!(Self);
-            id_pat = parse_quote!(());
+        if errors.is_empty() {
+            Ok(VariantData {
+                ident,
+                id_expr,
+                id_pat,
+                style,
+                fields,
+            })
         } else {
-            path = parse_quote!(Self::#ident);
-            id_pat = parse_quote!(id if id == #id_expr)
+            Err(Error::multiple(errors))
         }
-
-        let cons_fields_inner = fields.iter().enumerate().map(|(index, field)| {
-            let binding = field.ident(index);
-            let owned_binding = format_ident!("__owned_{}", binding);
-            match fields.style {
-                ast::Style::Tuple => quote!(#owned_binding),
-                ast::Style::Struct => quote!(#binding: #owned_binding),
-                ast::Style::Unit => unreachable!(),
-            }
-        });
-        let cons_fields = match fields.style {
-            ast::Style::Tuple => quote! {
-                ( #( #cons_fields_inner, )* )
-            },
-            ast::Style::Struct => quote! {
-                { #( #cons_fields_inner, )* }
-            },
-            ast::Style::Unit => quote! {},
-        };
-
-        let field_decoders = fields.iter().enumerate().map(|(index, field)| {
-            // used for parity with encode - public bindings must have same type, and encode must
-            // take by reference, so make a reference here as well.
-            let binding = field.ident(index);
-            let owned_binding = format_ident!("__owned_{}", binding);
-            let decoder = field
-                .generate_decoder(&crate_path, reader_binding)
-                .map(ToTokens::into_token_stream)
-                .unwrap_or_else(Error::write_errors);
-            quote! {
-                let #owned_binding = #decoder ?;
-                #[allow(unused_variables)]
-                let #binding = &#owned_binding;
-            }
-        });
-
-        Ok(parse_quote! {
-            #id_pat => {
-                #( #field_decoders )*
-                Ok(#path #cons_fields)
-            }
-        })
     }
 }
 
-#[derive(Clone, FromField)]
+impl VariantData {
+    fn from_struct(
+        fields: &ast::Fields<FieldReceiver>,
+        crate_path: &syn::Path,
+    ) -> Result<VariantData, Error> {
+        let mut errors = Vec::new();
+
+        let ident = None;
+        let id_expr = parse_quote!(());
+        let id_pat = parse_quote!(_);
+        let style = fields.style;
+
+        let fields = fields
+            .iter()
+            .enumerate()
+            .flat_map(|(index, field)| match field.validate(crate_path, index) {
+                Ok(field) => Some(field),
+                Err(error) => {
+                    errors.push(error);
+                    None
+                }
+            })
+            .collect();
+
+        if errors.is_empty() {
+            Ok(VariantData {
+                ident,
+                id_expr,
+                id_pat,
+                style,
+                fields,
+            })
+        } else {
+            Err(Error::multiple(errors))
+        }
+    }
+
+    fn encode_arm(
+        &self,
+        id_encoder: Option<&syn::TypePath>,
+        id_encode_ctx: &syn::Expr,
+        writer_binding: &syn::Ident,
+    ) -> syn::Arm {
+        let Self { id_expr, .. } = self;
+
+        let path: syn::Path = match &self.ident {
+            Some(ident) => parse_quote!(Self::#ident),
+            None => parse_quote!(Self),
+        };
+
+        let field_pat = self.fields.iter().map(|field| {
+            let FieldData {
+                stored_ident,
+                public_ref_ident,
+                ..
+            } = field;
+            match stored_ident {
+                Some(stored_ident) => quote!(#stored_ident: #public_ref_ident),
+                None => quote!(#public_ref_ident),
+            }
+        });
+        let pat_fields = match self.style {
+            ast::Style::Tuple => quote!( ( #( #field_pat, )* ) ),
+            ast::Style::Struct => quote!( { #( #field_pat, )* } ),
+            ast::Style::Unit => quote!(),
+        };
+
+        let id_encode_stmt = id_encoder.map(|encoder| {
+            quote! {
+                #encoder(&(#id_expr), #id_encode_ctx, #writer_binding)?;
+            }
+        });
+
+        let field_ident = self.fields.iter().map(|field| &field.public_ref_ident);
+        let field_encoder = self.fields.iter().map(|field| &field.encoder);
+        let field_encode_ctx = self.fields.iter().map(|field| &field.encode_ctx);
+
+        parse_quote! {
+            #path #pat_fields => {
+                #id_encode_stmt
+                #( #field_encoder(#field_ident, #field_encode_ctx, #writer_binding)?; )*
+                Ok(())
+            }
+        }
+    }
+
+    fn decode_arm(&self, reader_binding: &syn::Ident) -> syn::Arm {
+        let Self { id_pat, .. } = self;
+
+        let private_owned_ident = self.fields.iter().map(|field| &field.private_owned_ident);
+        let public_ref_ident = self.fields.iter().map(|field| &field.public_ref_ident);
+        let field_decoder = self.fields.iter().map(|field| &field.decoder);
+        let field_decode_ctx = self.fields.iter().map(|field| &field.decode_ctx);
+
+        let path: syn::Path = match &self.ident {
+            Some(ident) => parse_quote!(Self::#ident),
+            None => parse_quote!(Self),
+        };
+
+        let field_cons = self.fields.iter().map(|field| {
+            let FieldData {
+                stored_ident,
+                private_owned_ident,
+                ..
+            } = field;
+            match stored_ident {
+                Some(stored_ident) => quote!(#stored_ident: #private_owned_ident),
+                None => quote!(#private_owned_ident),
+            }
+        });
+        let cons_fields = match self.style {
+            ast::Style::Tuple => quote!( ( #( #field_cons, )* ) ),
+            ast::Style::Struct => quote!( { #( #field_cons, )* } ),
+            ast::Style::Unit => quote!(),
+        };
+
+        parse_quote! {
+            #id_pat => {
+                #(
+                    let #private_owned_ident = #field_decoder(#field_decode_ctx, #reader_binding)?;
+                    #[allow(unused_variables)]
+                    let #public_ref_ident = &#private_owned_ident;
+                )*
+                Ok(#path #cons_fields)
+            }
+        }
+    }
+}
+
+#[derive(FromField)]
 #[darling(attributes(declio))]
-struct Field {
+struct FieldReceiver {
     ident: Option<syn::Ident>,
     ty: syn::Type,
 
@@ -415,70 +519,90 @@ struct Field {
     decode_with: Option<syn::Path>,
 }
 
-impl Field {
-    fn ident(&self, index: usize) -> syn::Ident {
-        self.ident
-            .clone()
-            .unwrap_or_else(|| format_ident!("field_{}", index))
-    }
+struct FieldData {
+    stored_ident: Option<syn::Ident>,
+    public_ref_ident: syn::Ident,
+    private_owned_ident: syn::Ident,
+    encode_ctx: syn::Expr,
+    decode_ctx: syn::Expr,
+    encoder: syn::Expr,
+    decoder: syn::Expr,
+}
 
-    fn generate_encoder(
-        &self,
-        crate_path: &syn::Path,
-        binding: &syn::Ident,
-        writer_binding: &syn::Ident,
-    ) -> Result<syn::Expr, Error> {
+impl FieldReceiver {
+    fn validate(&self, crate_path: &syn::Path, index: usize) -> Result<FieldData, Error> {
         let Self { ty, .. } = self;
+        let mut errors = Vec::new();
 
-        let ctx: TokenStream = self
-            .ctx
-            .encode()
-            .map(|lit| lit.parse().unwrap_or_else(|e| e.to_compile_error()))
-            .unwrap_or_else(|| quote!(()));
+        let stored_ident = self.ident.clone();
+        let public_ref_ident = match &self.ident {
+            Some(ident) => ident.clone(),
+            None => format_ident!("field_{}", index),
+        };
+        let private_owned_ident = format_ident!("__declio_owned_{}", public_ref_ident);
 
-        match (&self.with, &self.encode_with) {
-            (None, None) => Ok(
-                parse_quote! { <#ty as #crate_path::Encode<_>>::encode(#binding, #ctx, #writer_binding) },
-            ),
-            (Some(with), None) => {
-                Ok(parse_quote! { #with::encode(#binding, #ctx, #writer_binding) })
+        let encode_ctx: syn::Expr = match self.ctx.encode() {
+            Some(lit) => match lit.parse() {
+                Ok(expr) => expr,
+                Err(err) => {
+                    errors.push(from_syn_error(err));
+                    parse_quote!(unreachable!("compile error"))
+                }
+            },
+            None => parse_quote!(()),
+        };
+
+        let decode_ctx: syn::Expr = match self.ctx.decode() {
+            Some(lit) => match lit.parse() {
+                Ok(expr) => expr,
+                Err(err) => {
+                    errors.push(from_syn_error(err));
+                    parse_quote!(unreachable!("compile error"))
+                }
+            },
+            None => parse_quote!(()),
+        };
+
+        let encoder = match (&self.encode_with, &self.with) {
+            (None, None) => parse_quote!(<#ty as #crate_path::Encode<_>>::encode),
+            (Some(encode_with), None) => parse_quote!(#encode_with),
+            (None, Some(with)) => parse_quote!(#with::encode),
+            _ => {
+                errors.push(Error::custom(
+                    "`encode_with` and `with` are incompatible with each other",
+                ));
+                parse_quote!(__compile_error_throwaway)
             }
-            (None, Some(encode_with)) => {
-                Ok(parse_quote! { #encode_with(#binding, #ctx, #writer_binding) })
+        };
+
+        let decoder = match (&self.decode_with, &self.with) {
+            (None, None) => parse_quote!(<#ty as #crate_path::Decode<_>>::decode),
+            (Some(decode_with), None) => parse_quote!(#decode_with),
+            (None, Some(with)) => parse_quote!(#with::decode),
+            _ => {
+                errors.push(Error::custom(
+                    "`decode_with` and `with` are incompatible with each other",
+                ));
+                parse_quote!(__compile_error_throwaway)
             }
-            _ => Err(Error::custom(
-                "conflicting fields: `with` and `encode_with`",
-            )),
-        }
-    }
+        };
 
-    fn generate_decoder(
-        &self,
-        crate_path: &syn::Path,
-        reader_binding: &syn::Ident,
-    ) -> Result<syn::Expr, Error> {
-        let Self { ty, .. } = self;
-
-        let ctx: TokenStream = self
-            .ctx
-            .decode()
-            .map(|lit| lit.parse().unwrap_or_else(|e| e.to_compile_error()))
-            .unwrap_or_else(|| quote!(()));
-
-        match (&self.with, &self.decode_with) {
-            (None, None) => {
-                Ok(parse_quote! { <#ty as #crate_path::Decode<_>>::decode(#ctx, #reader_binding) })
-            }
-            (Some(with), None) => Ok(parse_quote! { #with::decode(#ctx, #reader_binding) }),
-            (None, Some(decode_with)) => Ok(parse_quote! { #decode_with(#ctx, #reader_binding) }),
-            _ => Err(Error::custom(
-                "conflicting fields: `with` and `decode_with`",
-            )),
+        if errors.is_empty() {
+            Ok(FieldData {
+                stored_ident,
+                public_ref_ident,
+                private_owned_ident,
+                encode_ctx,
+                decode_ctx,
+                encoder,
+                decoder,
+            })
+        } else {
+            Err(Error::multiple(errors))
         }
     }
 }
 
-#[derive(Debug, Clone)]
 enum Asym<T> {
     Single(T),
     Multi {
@@ -556,4 +680,8 @@ impl<T> Default for Asym<T> {
             decode: None,
         }
     }
+}
+
+fn from_syn_error(err: syn::Error) -> Error {
+    Error::custom(&err).with_span(&err.span())
 }

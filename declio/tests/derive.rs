@@ -176,7 +176,7 @@ fn container_ctx() {
     test_bidir_ctx(
         ContainerCtx { y: 0xdeadbeef },
         &[0xde, 0xad, 0xbe, 0xef],
-        (ctx::Endian::Big,),
+        ctx::Endian::Big,
     );
 }
 
