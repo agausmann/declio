@@ -98,6 +98,22 @@ where
     }
 }
 
+impl<T> Decode<Len> for Vec<T>
+where
+    T: Decode,
+{
+    /// Decodes multiple values of type `T`, collecting them in a `Vec`.
+    ///
+    /// The length of the vector / number of elements decoded is equal to the value of the
+    /// `Len` context.
+    fn decode<R>(len: Len, reader: &mut R) -> Result<Self, io::Error>
+    where
+        R: io::Read,
+    {
+        Self::decode((len, ()), reader)
+    }
+}
+
 impl<T, Ctx> Encode<Ctx> for Option<T>
 where
     T: Encode<Ctx>,
