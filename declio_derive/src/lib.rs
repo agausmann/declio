@@ -246,7 +246,7 @@ impl ContainerData {
                 #where_clause
             {
                 fn encode<W>(&self, #encode_ctx_pat: #encode_ctx_type, #writer_binding: &mut W)
-                    -> Result<(), #crate_path::export::io::Error>
+                    -> Result<(), #crate_path::Error>
                 where
                     W: #crate_path::export::io::Write,
                 {
@@ -291,16 +291,13 @@ impl ContainerData {
                 #where_clause
             {
                 fn decode<R>(#decode_ctx_pat: #decode_ctx_type, #reader_binding: &mut R)
-                    -> Result<Self, #crate_path::export::io::Error>
+                    -> Result<Self, #crate_path::Error>
                 where
                     R: #crate_path::export::io::Read,
                 {
                     match #id_decode_expr {
                         #( #variant_arm )*
-                        _ => Err(#crate_path::export::io::Error::new(
-                            #crate_path::export::io::ErrorKind::InvalidData,
-                            "unknown id value",
-                        )),
+                        _ => Err(#crate_path::Error::new("unknown id value")),
                     }
                 }
             }

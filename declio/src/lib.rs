@@ -2,10 +2,13 @@
 
 #![warn(missing_docs)]
 
-#[doc(hidden)]
-pub use std as export;
+mod error;
 
 pub mod ctx;
+
+pub use self::error::Error;
+#[doc(hidden)]
+pub use std as export;
 
 #[cfg(feature = "derive")]
 pub use declio_derive::{Decode, Encode};
@@ -17,7 +20,7 @@ use std::{io, mem};
 /// A type that can be encoded into a byte stream.
 pub trait Encode<Ctx = ()> {
     /// Encodes `&self` to the given writer.
-    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write;
 }
@@ -25,7 +28,7 @@ pub trait Encode<Ctx = ()> {
 /// A type that can be decoded from a byte stream.
 pub trait Decode<Ctx = ()>: Sized {
     /// Decodes a value from the given reader.
-    fn decode<R>(ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read;
 }
@@ -34,7 +37,7 @@ impl<T, Ctx> Encode<Ctx> for &T
 where
     T: Encode<Ctx>,
 {
-    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -50,7 +53,7 @@ where
     /// Encodes each element of the slice in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -69,7 +72,7 @@ where
     /// Encodes each element of the vector in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -86,7 +89,7 @@ where
     ///
     /// The length of the vector / number of elements decoded is equal to the value of the
     /// `Len` context.
-    fn decode<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>((Len(len), inner_ctx): (Len, Ctx), reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -106,7 +109,7 @@ where
     ///
     /// The length of the vector / number of elements decoded is equal to the value of the
     /// `Len` context.
-    fn decode<R>(len: Len, reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(len: Len, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -119,7 +122,7 @@ where
     T: Encode<Ctx>,
 {
     /// If `Some`, then the inner value is encoded, otherwise, nothing is written.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -143,7 +146,7 @@ where
     ///
     /// Since serializing a `None` writes nothing, deserialization is also a no-op; just construct
     /// a value of `None`.
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -156,7 +159,7 @@ where
     T: Encode<Ctx> + ToOwned + ?Sized,
 {
     /// Borrows a value of type `T` and encodes it.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -170,7 +173,7 @@ where
     T::Owned: Decode<Ctx>,
 {
     /// Decodes a value of type `T::Owned`.
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -183,7 +186,7 @@ where
     T: Encode<Ctx>,
 {
     /// Encodes the boxed value.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -196,7 +199,7 @@ where
     T: Decode<Ctx>,
 {
     /// Decodes a value of type `T` and boxes it.
-    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -206,7 +209,7 @@ where
 
 impl Encode for () {
     /// No-op.
-    fn encode<W>(&self, _: (), _: &mut W) -> Result<(), io::Error>
+    fn encode<W>(&self, _: (), _: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -216,7 +219,7 @@ impl Encode for () {
 
 impl Decode for () {
     /// No-op.
-    fn decode<R>(_: (), _: &mut R) -> Result<Self, io::Error>
+    fn decode<R>(_: (), _: &mut R) -> Result<Self, Error>
     where
         R: io::Read,
     {
@@ -227,7 +230,7 @@ impl Decode for () {
 macro_rules! impl_primitive {
     ($($t:ty)*) => {$(
         impl Encode<Endian> for $t {
-            fn encode<W>(&self, endian: Endian, writer: &mut W) -> Result<(), io::Error>
+            fn encode<W>(&self, endian: Endian, writer: &mut W) -> Result<(), Error>
             where
                 W: io::Write,
             {
@@ -235,12 +238,13 @@ macro_rules! impl_primitive {
                     Endian::Big => self.to_be_bytes(),
                     Endian::Little => self.to_le_bytes(),
                 };
-                writer.write_all(&bytes)
+                writer.write_all(&bytes)?;
+                Ok(())
             }
         }
 
         impl Encode for $t {
-            fn encode<W>(&self, _: (), writer: &mut W) -> Result<(), io::Error>
+            fn encode<W>(&self, _: (), writer: &mut W) -> Result<(), Error>
             where
                 W: io::Write,
             {
@@ -249,7 +253,7 @@ macro_rules! impl_primitive {
         }
 
         impl Decode<Endian> for $t {
-            fn decode<R>(endian: Endian, reader: &mut R) -> Result<Self, io::Error>
+            fn decode<R>(endian: Endian, reader: &mut R) -> Result<Self, Error>
             where
                 R: io::Read,
             {
@@ -263,7 +267,7 @@ macro_rules! impl_primitive {
         }
 
         impl Decode for $t {
-            fn decode<R>(_: (), reader: &mut R) -> Result<Self, io::Error>
+            fn decode<R>(_: (), reader: &mut R) -> Result<Self, Error>
             where
                 R: io::Read,
             {

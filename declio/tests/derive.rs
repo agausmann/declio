@@ -67,14 +67,14 @@ struct SkipIf {
 mod big_endian {
     use super::*;
 
-    pub fn encode<W>(x: &u32, _: (), writer: &mut W) -> Result<(), io::Error>
+    pub fn encode<W>(x: &u32, _: (), writer: &mut W) -> Result<(), declio::Error>
     where
         W: io::Write,
     {
         x.encode(ctx::Endian::Big, writer)
     }
 
-    pub fn decode<R>(_: (), reader: &mut R) -> Result<u32, io::Error>
+    pub fn decode<R>(_: (), reader: &mut R) -> Result<u32, declio::Error>
     where
         R: io::Read,
     {
