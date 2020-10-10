@@ -14,6 +14,10 @@ pub enum Endian {
 
 impl Endian {
     /// The native endianness of the target architecture.
+    ///
+    /// **Warning** - This should not be used for cross-platform I/O in general. While dealing with
+    /// native-endian bytes is marginally more efficient, it may cause incompatibilities if the
+    /// data is shared between multiple devices where the native byte orders are different.
     pub const fn native() -> Self {
         #[cfg(target_endian = "big")]
         let endian = Self::Big;
@@ -23,11 +27,17 @@ impl Endian {
 
         endian
     }
+
+    /// "Network-endian", an alias for big-endian, the default endianness.
+    pub const fn network() -> Self {
+        Self::Big
+    }
 }
 
 impl Default for Endian {
+    /// (Network- / Big-endian) The default endianness used to encode primitives.
     fn default() -> Self {
-        Self::native()
+        Self::network()
     }
 }
 
