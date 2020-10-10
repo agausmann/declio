@@ -227,6 +227,35 @@ impl Decode for () {
     }
 }
 
+impl Encode for bool {
+    /// Encodes `true` as a 1-byte, `false` as a 0-byte.
+    fn encode<W>(&self, _: (), writer: &mut W) -> Result<(), Error>
+    where
+        W: io::Write,
+    {
+        let byte = match self {
+            false => 0,
+            true => 1,
+        };
+        u8::encode(&byte, (), writer)
+    }
+}
+
+impl Decode for bool {
+    /// Decodes a 1-byte as `true`, a 0-byte as `false`, and any other byte value as an error.
+    fn decode<R>(_: (), reader: &mut R) -> Result<Self, Error>
+    where
+        R: io::Read,
+    {
+        let byte = u8::decode((), reader)?;
+        match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::new("invalid ")),
+        }
+    }
+}
+
 macro_rules! impl_primitive {
     ($($t:ty)*) => {$(
         impl Encode<Endian> for $t {
