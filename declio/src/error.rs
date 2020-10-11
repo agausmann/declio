@@ -3,7 +3,7 @@ use std::fmt;
 /// Encoding and decoding errors.
 pub struct Error {
     message: String,
-    source: Option<Box<dyn std::error::Error + 'static>>,
+    source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
 impl Error {
@@ -21,7 +21,7 @@ impl Error {
     /// Creates a new `Error` with the given error value as the source.
     pub fn wrap<E>(error: E) -> Self
     where
-        E: std::error::Error + 'static,
+        E: std::error::Error + Send + Sync + 'static,
     {
         Self {
             message: error.to_string(),
@@ -33,7 +33,7 @@ impl Error {
     pub fn with_context<S, E>(message: S, error: E) -> Self
     where
         S: ToString,
-        E: std::error::Error + 'static,
+        E: std::error::Error + Send + Sync + 'static,
     {
         Self {
             message: message.to_string(),
@@ -57,7 +57,10 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source.as_ref().map(Box::as_ref)
+        self.source
+            .as_ref()
+            .map(Box::as_ref)
+            .map(|e| e as &(dyn std::error::Error + 'static))
     }
 }
 
