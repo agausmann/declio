@@ -51,15 +51,15 @@ struct ContainerData {
     ident: syn::Ident,
     generics: syn::Generics,
     crate_path: syn::Path,
-    encode_ctx_pat: syn::Pat,
-    decode_ctx_pat: syn::Pat,
-    encode_ctx_type: syn::Type,
-    decode_ctx_type: syn::Type,
-    id_encode_ctx: syn::Expr,
-    id_decode_ctx: syn::Expr,
-    id_encoder: Option<syn::TypePath>,
-    id_decoder: Option<syn::TypePath>,
-    id_decode_expr: Option<syn::Expr>,
+    encode_ctx_pat: TokenStream,
+    decode_ctx_pat: TokenStream,
+    encode_ctx_type: TokenStream,
+    decode_ctx_type: TokenStream,
+    id_encode_ctx: TokenStream,
+    id_decode_ctx: TokenStream,
+    id_encoder: Option<TokenStream>,
+    id_decoder: Option<TokenStream>,
+    id_decode_expr: Option<TokenStream>,
     variants: Vec<VariantData>,
 }
 
@@ -75,7 +75,7 @@ impl ContainerReceiver {
             .unwrap_or_else(|| parse_quote!(declio));
 
         let mut parse_ctx = |arg: Option<&syn::LitStr>| match arg {
-            None => (parse_quote!(_), parse_quote!(())),
+            None => (quote!(_), quote!(())),
             Some(lit) => {
                 let parts: Punctuated<syn::FnArg, Token![,]> =
                     match lit.parse_with(Punctuated::parse_terminated) {
@@ -105,12 +105,9 @@ impl ContainerReceiver {
 
                 // Special case: single context variable gets to be not-a-tuple.
                 if parts.len() == 1 {
-                    (parse_quote!( #( #pats )* ), parse_quote!( #( #types )* ))
+                    (quote!( #( #pats )* ), quote!( #( #types )* ))
                 } else {
-                    (
-                        parse_quote!( ( #( #pats , )* ) ),
-                        parse_quote!( ( #( #types , )* ) ),
-                    )
+                    (quote!( ( #( #pats , )* ) ), quote!( ( #( #types , )* ) ))
                 }
             }
         };
@@ -119,28 +116,28 @@ impl ContainerReceiver {
         let (decode_ctx_pat, decode_ctx_type) = parse_ctx(self.ctx.decode());
 
         let (id_encoder, id_decoder, id_decode_expr) = match (&self.id_expr, &self.id_type) {
-            (None, None) => (None, None, Some(parse_quote!(()))),
+            (None, None) => (None, None, Some(quote!(()))),
             (Some(lit), None) => {
-                let expr: syn::Expr = match lit.parse() {
+                let expr = match lit.parse() {
                     Ok(expr) => expr,
                     Err(error) => {
                         errors.push(from_syn_error(error));
-                        parse_quote!(unreachable!("compile error"))
+                        quote!(unreachable!("compile error"))
                     }
                 };
                 (None, None, Some(expr))
             }
             (None, Some(lit)) => {
-                let ty: syn::Type = match lit.parse() {
+                let ty = match lit.parse() {
                     Ok(ty) => ty,
                     Err(error) => {
                         errors.push(from_syn_error(error));
-                        parse_quote!(())
+                        quote!(())
                     }
                 };
                 (
-                    Some(parse_quote!( <#ty as #crate_path::Encode<_>>::encode )),
-                    Some(parse_quote!( <#ty as #crate_path::Decode<_>>::decode )),
+                    Some(quote!( <#ty as #crate_path::Encode<_>>::encode )),
+                    Some(quote!( <#ty as #crate_path::Decode<_>>::decode )),
                     None,
                 )
             }
@@ -153,12 +150,12 @@ impl ContainerReceiver {
         };
 
         let mut parse_id_ctx = |arg: Option<&syn::LitStr>| match arg {
-            None => parse_quote!(()),
+            None => quote!(()),
             Some(lit) => match lit.parse() {
                 Ok(expr) => expr,
                 Err(error) => {
                     errors.push(from_syn_error(error));
-                    parse_quote!(unreachable!("compile error"))
+                    quote!(unreachable!("compile error"))
                 }
             },
         };
@@ -221,7 +218,7 @@ impl ContainerReceiver {
 }
 
 impl ContainerData {
-    fn encode_impl(&self) -> syn::ItemImpl {
+    fn encode_impl(&self) -> TokenStream {
         let Self {
             ident,
             crate_path,
@@ -230,7 +227,7 @@ impl ContainerData {
             ..
         } = self;
         let (impl_generics, ident_generics, where_clause) = self.generics.split_for_impl();
-        let writer_binding: syn::Ident = parse_quote!(__declio_writer);
+        let writer_binding = quote!(__declio_writer);
 
         let variant_arm = self.variants.iter().map(|variant| {
             variant.encode_arm(
@@ -240,7 +237,7 @@ impl ContainerData {
             )
         });
 
-        parse_quote! {
+        quote! {
             #[allow(non_shorthand_field_patterns)]
             impl #impl_generics #crate_path::Encode<#encode_ctx_type> for #ident #ident_generics
                 #where_clause
@@ -258,7 +255,7 @@ impl ContainerData {
         }
     }
 
-    fn decode_impl(&self) -> syn::ItemImpl {
+    fn decode_impl(&self) -> TokenStream {
         let Self {
             ident,
             crate_path,
@@ -273,7 +270,7 @@ impl ContainerData {
             ..
         } = self;
         let (impl_generics, ident_generics, where_clause) = self.generics.split_for_impl();
-        let reader_binding: syn::Ident = parse_quote!(__declio_reader);
+        let reader_binding: TokenStream = quote!(__declio_reader);
 
         let variant_arm = self
             .variants
@@ -286,7 +283,7 @@ impl ContainerData {
             _ => unreachable!(),
         };
 
-        parse_quote! {
+        quote! {
             impl #impl_generics #crate_path::Decode<#decode_ctx_type> for #ident #ident_generics
                 #where_clause
             {
@@ -316,8 +313,7 @@ struct VariantReceiver {
 
 struct VariantData {
     ident: Option<syn::Ident>,
-    id_expr: syn::Expr,
-    // would be syn::Pat, but guards aren't first-class patterns, just a feature of `match` arms.
+    id_expr: TokenStream,
     id_pat: TokenStream,
     style: ast::Style,
     fields: Vec<FieldData>,
@@ -329,15 +325,15 @@ impl VariantReceiver {
 
         let ident = Some(self.ident.clone());
 
-        let id_expr: syn::Expr = match self.id.parse() {
+        let id_expr = match self.id.parse() {
             Ok(expr) => expr,
             Err(error) => {
                 errors.push(from_syn_error(error));
-                parse_quote!(unreachable!("compile error"))
+                quote!(unreachable!("compile error"))
             }
         };
 
-        let id_pat = parse_quote!(__declio_id if __declio_id == #id_expr);
+        let id_pat = quote!(__declio_id if __declio_id == #id_expr);
 
         let style = self.fields.style;
 
@@ -376,8 +372,8 @@ impl VariantData {
         let mut errors = Vec::new();
 
         let ident = None;
-        let id_expr = parse_quote!(());
-        let id_pat = parse_quote!(_);
+        let id_expr = quote!(());
+        let id_pat = quote!(_);
         let style = fields.style;
 
         let fields = fields
@@ -407,15 +403,15 @@ impl VariantData {
 
     fn encode_arm(
         &self,
-        id_encoder: Option<&syn::TypePath>,
-        id_encode_ctx: &syn::Expr,
-        writer_binding: &syn::Ident,
-    ) -> syn::Arm {
+        id_encoder: Option<&TokenStream>,
+        id_encode_ctx: &TokenStream,
+        writer_binding: &TokenStream,
+    ) -> TokenStream {
         let Self { id_expr, .. } = self;
 
-        let path: syn::Path = match &self.ident {
-            Some(ident) => parse_quote!(Self::#ident),
-            None => parse_quote!(Self),
+        let path = match &self.ident {
+            Some(ident) => quote!(Self::#ident),
+            None => quote!(Self),
         };
 
         let field_pat = self.fields.iter().map(|field| {
@@ -446,7 +442,7 @@ impl VariantData {
             .iter()
             .map(|field| field.encode_expr(writer_binding));
 
-        parse_quote! {
+        quote! {
             #path #pat_fields => {
                 #id_encode_stmt
                 #( #field_encode_expr; )*
@@ -455,7 +451,7 @@ impl VariantData {
         }
     }
 
-    fn decode_arm(&self, reader_binding: &syn::Ident) -> syn::Arm {
+    fn decode_arm(&self, reader_binding: &TokenStream) -> TokenStream {
         let Self { id_pat, .. } = self;
 
         let private_owned_ident = self.fields.iter().map(|field| &field.private_owned_ident);
@@ -465,9 +461,9 @@ impl VariantData {
             .iter()
             .map(|field| field.decode_expr(reader_binding));
 
-        let path: syn::Path = match &self.ident {
-            Some(ident) => parse_quote!(Self::#ident),
-            None => parse_quote!(Self),
+        let path = match &self.ident {
+            Some(ident) => quote!(Self::#ident),
+            None => quote!(Self),
         };
 
         let field_cons = self.fields.iter().map(|field| {
@@ -487,7 +483,7 @@ impl VariantData {
             ast::Style::Unit => quote!(),
         };
 
-        parse_quote! {
+        quote! {
             #id_pat => {
                 #(
                     let #private_owned_ident = #field_decode_expr;
@@ -526,11 +522,11 @@ struct FieldData {
     stored_ident: Option<syn::Ident>,
     public_ref_ident: syn::Ident,
     private_owned_ident: syn::Ident,
-    encode_ctx: syn::Expr,
-    decode_ctx: syn::Expr,
-    encoder: syn::Expr,
-    decoder: syn::Expr,
-    skip_if: Option<syn::Expr>,
+    encode_ctx: TokenStream,
+    decode_ctx: TokenStream,
+    encoder: TokenStream,
+    decoder: TokenStream,
+    skip_if: Option<TokenStream>,
 }
 
 impl FieldReceiver {
@@ -545,49 +541,49 @@ impl FieldReceiver {
         };
         let private_owned_ident = format_ident!("__declio_owned_{}", public_ref_ident);
 
-        let encode_ctx: syn::Expr = match self.ctx.encode() {
+        let encode_ctx = match self.ctx.encode() {
             Some(lit) => match lit.parse() {
                 Ok(expr) => expr,
                 Err(err) => {
                     errors.push(from_syn_error(err));
-                    parse_quote!(unreachable!("compile error"))
+                    quote!(unreachable!("compile error"))
                 }
             },
-            None => parse_quote!(()),
+            None => quote!(()),
         };
 
-        let decode_ctx: syn::Expr = match self.ctx.decode() {
+        let decode_ctx = match self.ctx.decode() {
             Some(lit) => match lit.parse() {
                 Ok(expr) => expr,
                 Err(err) => {
                     errors.push(from_syn_error(err));
-                    parse_quote!(unreachable!("compile error"))
+                    quote!(unreachable!("compile error"))
                 }
             },
-            None => parse_quote!(()),
+            None => quote!(()),
         };
 
         let encoder = match (&self.encode_with, &self.with) {
-            (None, None) => parse_quote!(<#ty as #crate_path::Encode<_>>::encode),
-            (Some(encode_with), None) => parse_quote!(#encode_with),
-            (None, Some(with)) => parse_quote!(#with::encode),
+            (None, None) => quote!(<#ty as #crate_path::Encode<_>>::encode),
+            (Some(encode_with), None) => quote!(#encode_with),
+            (None, Some(with)) => quote!(#with::encode),
             _ => {
                 errors.push(Error::custom(
                     "`encode_with` and `with` are incompatible with each other",
                 ));
-                parse_quote!(__compile_error_throwaway)
+                quote!(__compile_error_throwaway)
             }
         };
 
         let decoder = match (&self.decode_with, &self.with) {
-            (None, None) => parse_quote!(<#ty as #crate_path::Decode<_>>::decode),
-            (Some(decode_with), None) => parse_quote!(#decode_with),
-            (None, Some(with)) => parse_quote!(#with::decode),
+            (None, None) => quote!(<#ty as #crate_path::Decode<_>>::decode),
+            (Some(decode_with), None) => quote!(#decode_with),
+            (None, Some(with)) => quote!(#with::decode),
             _ => {
                 errors.push(Error::custom(
                     "`decode_with` and `with` are incompatible with each other",
                 ));
-                parse_quote!(__compile_error_throwaway)
+                quote!(__compile_error_throwaway)
             }
         };
 
@@ -596,7 +592,7 @@ impl FieldReceiver {
                 Ok(expr) => Some(expr),
                 Err(error) => {
                     errors.push(from_syn_error(error));
-                    Some(parse_quote!(unreachable!("compile error")))
+                    Some(quote!(unreachable!("compile error")))
                 }
             },
             None => None,
@@ -620,18 +616,18 @@ impl FieldReceiver {
 }
 
 impl FieldData {
-    fn encode_expr(&self, writer_binding: &syn::Ident) -> syn::Expr {
+    fn encode_expr(&self, writer_binding: &TokenStream) -> TokenStream {
         let Self {
             public_ref_ident,
             encoder,
             encode_ctx,
             ..
         } = self;
-        let raw_encoder: syn::Expr = parse_quote! {
+        let raw_encoder = quote! {
             #encoder(#public_ref_ident, #encode_ctx, #writer_binding)?
         };
         match &self.skip_if {
-            Some(skip_if) => parse_quote! {
+            Some(skip_if) => quote! {
                 if #skip_if {
                     ()
                 } else {
@@ -642,17 +638,17 @@ impl FieldData {
         }
     }
 
-    fn decode_expr(&self, reader_binding: &syn::Ident) -> syn::Expr {
+    fn decode_expr(&self, reader_binding: &TokenStream) -> TokenStream {
         let Self {
             decode_ctx,
             decoder,
             ..
         } = self;
-        let raw_decoder: syn::Expr = parse_quote! {
+        let raw_decoder = quote! {
             #decoder(#decode_ctx, #reader_binding)?
         };
         match &self.skip_if {
-            Some(skip_if) => parse_quote! {
+            Some(skip_if) => quote! {
                 if #skip_if {
                     Default::default()
                 } else {
