@@ -279,7 +279,10 @@ impl ContainerData {
             .map(|variant| variant.decode_arm(&self.crate_path, &reader_binding));
 
         let id_decode_expr = match (id_decoder, id_decode_expr) {
-            (Some(decoder), None) => quote!(#decoder(#id_decode_ctx, #reader_binding)?),
+            (Some(decoder), None) => quote! {
+                #decoder(#id_decode_ctx, #reader_binding)
+                    .map_err(|e| #crate_path::Error::with_context("error decoding enum id", e))?
+            },
             (None, Some(decode_expr)) => quote!(#decode_expr),
             _ => unreachable!(),
         };
@@ -435,7 +438,8 @@ impl VariantData {
 
         let id_encode_stmt = id_encoder.map(|encoder| {
             quote! {
-                #encoder(&(#id_expr), #id_encode_ctx, #writer_binding)?;
+                #encoder(&(#id_expr), #id_encode_ctx, #writer_binding)
+                    .map_err(|e| #crate_path::Error::with_context("error encoding enum id", e))?;
             }
         });
 
