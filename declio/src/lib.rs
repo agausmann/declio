@@ -251,7 +251,7 @@ impl Decode for bool {
         match byte {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(Error::new("invalid ")),
+            _ => Err(Error::new("invalid byte value for boolean")),
         }
     }
 }

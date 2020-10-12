@@ -233,6 +233,7 @@ impl ContainerData {
             variant.encode_arm(
                 self.id_encoder.as_ref(),
                 &self.id_encode_ctx,
+                &self.crate_path,
                 &writer_binding,
             )
         });
@@ -275,7 +276,7 @@ impl ContainerData {
         let variant_arm = self
             .variants
             .iter()
-            .map(|variant| variant.decode_arm(&reader_binding));
+            .map(|variant| variant.decode_arm(&self.crate_path, &reader_binding));
 
         let id_decode_expr = match (id_decoder, id_decode_expr) {
             (Some(decoder), None) => quote!(#decoder(#id_decode_ctx, #reader_binding)?),
@@ -405,6 +406,7 @@ impl VariantData {
         &self,
         id_encoder: Option<&TokenStream>,
         id_encode_ctx: &TokenStream,
+        crate_path: &syn::Path,
         writer_binding: &TokenStream,
     ) -> TokenStream {
         let Self { id_expr, .. } = self;
@@ -440,7 +442,7 @@ impl VariantData {
         let field_encode_expr = self
             .fields
             .iter()
-            .map(|field| field.encode_expr(writer_binding));
+            .map(|field| field.encode_expr(crate_path, writer_binding));
 
         quote! {
             #path #pat_fields => {
@@ -451,7 +453,7 @@ impl VariantData {
         }
     }
 
-    fn decode_arm(&self, reader_binding: &TokenStream) -> TokenStream {
+    fn decode_arm(&self, crate_path: &syn::Path, reader_binding: &TokenStream) -> TokenStream {
         let Self { id_pat, .. } = self;
 
         let private_owned_ident = self.fields.iter().map(|field| &field.private_owned_ident);
@@ -459,7 +461,7 @@ impl VariantData {
         let field_decode_expr = self
             .fields
             .iter()
-            .map(|field| field.decode_expr(reader_binding));
+            .map(|field| field.decode_expr(crate_path, reader_binding));
 
         let path = match &self.ident {
             Some(ident) => quote!(Self::#ident),
@@ -616,15 +618,17 @@ impl FieldReceiver {
 }
 
 impl FieldData {
-    fn encode_expr(&self, writer_binding: &TokenStream) -> TokenStream {
+    fn encode_expr(&self, crate_path: &syn::Path, writer_binding: &TokenStream) -> TokenStream {
         let Self {
             public_ref_ident,
             encoder,
             encode_ctx,
             ..
         } = self;
+        let error_context = format!("error encoding field {}", public_ref_ident);
         let raw_encoder = quote! {
-            #encoder(#public_ref_ident, #encode_ctx, #writer_binding)?
+            #encoder(#public_ref_ident, #encode_ctx, #writer_binding)
+                .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
         };
         match &self.skip_if {
             Some(skip_if) => quote! {
@@ -638,14 +642,17 @@ impl FieldData {
         }
     }
 
-    fn decode_expr(&self, reader_binding: &TokenStream) -> TokenStream {
+    fn decode_expr(&self, crate_path: &syn::Path, reader_binding: &TokenStream) -> TokenStream {
         let Self {
+            public_ref_ident,
             decode_ctx,
             decoder,
             ..
         } = self;
+        let error_context = format!("error decoding field {}", public_ref_ident);
         let raw_decoder = quote! {
-            #decoder(#decode_ctx, #reader_binding)?
+            #decoder(#decode_ctx, #reader_binding)
+                .map_err(|e| #crate_path::Error::with_context(#error_context, e))?
         };
         match &self.skip_if {
             Some(skip_if) => quote! {
