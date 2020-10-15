@@ -86,7 +86,7 @@
 //!
 //! Here is an example which makes use of derive macros to encode and decode a
 //! user-defined data type. This is not a complete demonstration of the features of the derive
-//! macros; for a more complete reference, see [TODO].
+//! macros; for a more complete reference, see the [`derive`] module docs.
 //!
 //! ```
 //! use declio::{Encode, Decode};
@@ -136,13 +136,19 @@
 mod error;
 
 pub mod ctx;
+pub mod derive;
 
 pub use self::error::Error;
 #[doc(hidden)]
 pub use std as export;
 
 #[cfg(feature = "derive")]
-pub use declio_derive::{Decode, Encode};
+/// Implements [`Decode`] for a given type. For more information, see [`derive`](derive/index.html).
+pub use declio_derive::Decode;
+
+#[cfg(feature = "derive")]
+/// Implements [`Encode`] for a given type. For more information, see [`derive`](derive/index.html).
+pub use declio_derive::Encode;
 
 use self::ctx::{Endian, Len};
 use std::borrow::Cow;

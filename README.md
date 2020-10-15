@@ -88,7 +88,7 @@ passed, which is also valid and will pass `()` as context to the element decoder
 
 Here is an example which makes use of derive macros to encode and decode a
 user-defined data type. This is not a complete demonstration of the features of the derive
-macros; for a more complete reference, see [TODO].
+macros; for a more complete reference, see the [`derive`] module docs.
 
 ```rust
 use declio::{Encode, Decode};
