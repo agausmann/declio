@@ -3,13 +3,17 @@ name = "declio_derive"
 version = "0.1.0"
 authors = ["Adam Gausmann <agausmann@fastmail.com>"]
 edition = "2018"
+description = "Derive macros for declio"
+repository = "https://github.com/agausmann/declio"
+license = "MIT"
+keywords = ["binary", "io", "declarative", "bidirectional"]
+categories = ["encoding", "parsing"]
 
 [lib]
 proc-macro = true
 
 [dependencies]
 darling = "0.10"
-lazy_static = "1.4"
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = "1.0"
