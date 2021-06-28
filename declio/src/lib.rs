@@ -86,7 +86,7 @@
 //!
 //! Here is an example which makes use of derive macros to encode and decode a
 //! user-defined data type. This is not a complete demonstration of the features of the derive
-//! macros; for a more complete reference, see the [`derive`] module docs.
+//! macros; for a more complete reference, see the [`mod@derive`] module docs.
 //!
 //! ```
 //! use declio::{Encode, Decode};
@@ -134,6 +134,7 @@
 #![warn(missing_docs)]
 
 mod error;
+mod macros;
 
 pub mod ctx;
 pub mod derive;
