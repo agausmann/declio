@@ -201,6 +201,40 @@ where
     }
 }
 
+impl<T, Ctx, const N: usize> Encode<Ctx> for [T; N]
+where
+    T: Encode<Ctx>,
+    Ctx: Clone,
+{
+    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    where
+        W: io::Write,
+    {
+        for elem in self {
+            elem.encode(inner_ctx.clone(), writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl<T, Ctx, const N: usize> Decode<Ctx> for [T; N]
+where
+    T: Decode<Ctx> + Copy + Default,
+    Ctx: Clone,
+{
+    fn decode<R>(inner_ctx: Ctx, reader: &mut R) -> Result<Self, Error>
+    where
+        R: io::Read,
+    {
+        //TODO: Use MaybeUninit when stabilized with arrays
+        let mut arr = [Default::default(); N];
+        for slot in &mut arr {
+            *slot = Decode::decode(inner_ctx.clone(), reader)?;
+        }
+        Ok(arr)
+    }
+}
+
 impl<T, Ctx> Encode<Ctx> for Vec<T>
 where
     T: Encode<Ctx>,
