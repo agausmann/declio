@@ -138,6 +138,7 @@ mod macros;
 
 pub mod ctx;
 pub mod derive;
+pub mod util;
 
 pub use self::error::Error;
 #[doc(hidden)]
