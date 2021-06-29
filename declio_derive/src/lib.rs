@@ -38,7 +38,7 @@ struct ContainerReceiver {
     ctx: Asym<syn::LitStr>,
 
     #[darling(default)]
-    id_expr: Option<syn::LitStr>,
+    id_expr: Asym<syn::LitStr>,
 
     #[darling(default)]
     id_type: Option<syn::LitStr>,
@@ -59,6 +59,7 @@ struct ContainerData {
     id_decode_ctx: TokenStream,
     id_encoder: Option<TokenStream>,
     id_decoder: Option<TokenStream>,
+    id_check_expr: Option<TokenStream>,
     id_decode_expr: Option<TokenStream>,
     variants: Vec<VariantData>,
 }
@@ -115,7 +116,8 @@ impl ContainerReceiver {
         let (encode_ctx_pat, encode_ctx_type) = parse_ctx(self.ctx.encode());
         let (decode_ctx_pat, decode_ctx_type) = parse_ctx(self.ctx.decode());
 
-        let (id_encoder, id_decoder, id_decode_expr) = match (&self.id_expr, &self.id_type) {
+        let (id_encoder, id_decoder, id_decode_expr) = match (&self.id_expr.decode(), &self.id_type)
+        {
             (None, None) => (None, None, Some(quote!(()))),
             (Some(lit), None) => {
                 let expr = match lit.parse() {
@@ -143,10 +145,23 @@ impl ContainerReceiver {
             }
             (Some(..), Some(..)) => {
                 errors.push(Error::custom(
-                    "`id_expr` and `id_type` are incompatible with each other",
+                    "`id_expr(decode = \"...\")` and `id_type` are incompatible with each other",
                 ));
                 (None, None, None)
             }
+        };
+        let id_check_expr = match &self.id_expr.encode() {
+            Some(lit) => {
+                let expr = match lit.parse() {
+                    Ok(expr) => expr,
+                    Err(error) => {
+                        errors.push(from_syn_error(error));
+                        quote!(unreachable!("compile error"))
+                    }
+                };
+                Some(expr)
+            }
+            None => None,
         };
 
         let mut parse_id_ctx = |arg: Option<&syn::LitStr>| match arg {
@@ -209,6 +224,7 @@ impl ContainerReceiver {
                 id_encoder,
                 id_decoder,
                 id_decode_expr,
+                id_check_expr,
                 variants,
             })
         } else {
@@ -233,6 +249,7 @@ impl ContainerData {
             variant.encode_arm(
                 self.id_encoder.as_ref(),
                 &self.id_encode_ctx,
+                self.id_check_expr.as_ref(),
                 &self.crate_path,
                 &writer_binding,
             )
@@ -409,6 +426,7 @@ impl VariantData {
         &self,
         id_encoder: Option<&TokenStream>,
         id_encode_ctx: &TokenStream,
+        id_check_expr: Option<&TokenStream>,
         crate_path: &syn::Path,
         writer_binding: &TokenStream,
     ) -> TokenStream {
@@ -436,6 +454,13 @@ impl VariantData {
             ast::Style::Unit => quote!(),
         };
 
+        let id_check_stmt = id_check_expr.map(|check_value| {
+            quote! {
+                if #id_expr != #check_value {
+                    return Err(#crate_path::Error::new("id context does not match variant id"));
+                }
+            }
+        });
         let id_encode_stmt = id_encoder.map(|encoder| {
             quote! {
                 #encoder(&(#id_expr), #id_encode_ctx, #writer_binding)
@@ -450,6 +475,7 @@ impl VariantData {
 
         quote! {
             #path #pat_fields => {
+                #id_check_stmt
                 #id_encode_stmt
                 #( #field_encode_expr; )*
                 Ok(())
@@ -680,6 +706,17 @@ enum Asym<T> {
 }
 
 impl<T> Asym<T> {
+    fn is_some(&self) -> bool {
+        match self {
+            Self::Single(..) => true,
+            Self::Multi { encode, decode } => encode.is_some() || decode.is_some(),
+        }
+    }
+
+    fn is_none(&self) -> bool {
+        !self.is_some()
+    }
+
     fn encode(&self) -> Option<&T> {
         match self {
             Self::Single(val) => Some(val),

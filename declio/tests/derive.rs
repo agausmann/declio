@@ -62,6 +62,15 @@ enum IdCtx {
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
+#[declio(ctx = "id: u8", id_expr = "id")]
+enum IdExpr {
+    #[declio(id = "1")]
+    Bar,
+    #[declio(id = "2")]
+    Baz,
+}
+
+#[derive(Debug, PartialEq, Encode, Decode)]
 struct SkipIf {
     x: u8,
     #[declio(skip_if = "*x == 8")]
@@ -193,6 +202,11 @@ fn container_ctx() {
 #[test]
 fn id_ctx() {
     test_bidir(IdCtx::Bar, &[0x01, 0x00]);
+}
+
+#[test]
+fn id_expr() {
+    test_bidir_ctx(IdExpr::Baz, &[], 2u8);
 }
 
 #[test]
