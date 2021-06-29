@@ -52,7 +52,7 @@
 //!
 //! ```
 //! use declio::Decode;
-//! use declio::ctx::Len;
+//! use declio::ctx::{Len, Endian};
 //!
 //! let mut bytes = &[
 //!     // len
@@ -65,10 +65,10 @@
 //!     0xbe, 0xef,
 //! ][..];
 //!
-//! let len = u16::decode((), &mut bytes)
+//! let len = u16::decode(Endian::Big, &mut bytes)
 //!     .expect("decode len failed");
 //!
-//! let words: Vec<u16> = Vec::decode(Len(len as usize), &mut bytes)
+//! let words: Vec<u16> = Vec::decode((Len(len as usize), Endian::Big), &mut bytes)
 //!     .expect("decode bytes failed");
 //!
 //! assert!(bytes.is_empty()); // did we consume the whole buffer?
@@ -79,10 +79,6 @@
 //! length value. It doesn't know what integer size or byte order the binary format uses to encode
 //! the length; it doesn't even know if the length is encoded at all! It might be some fixed length
 //! defined as part of the format.
-//!
-//! Also note that we are decoding integers in this example, but I've omitted the `Endian` context,
-//! instead passing `()` to `u16::decode`.  In the case of `u16` and other primitives, providing
-//! `()` as context defaults to `Endian::Big`.
 //!
 //! `Vec::decode` can also accept an additional context value to pass to the element decoder, using
 //! a 2-tuple like `(Len(len as usize), Endian::Big)`. However, in this example, only a `Len` is
@@ -147,6 +143,7 @@ pub mod derive;
 pub mod util;
 
 pub use self::error::Error;
+
 #[doc(hidden)]
 pub use std as export;
 
@@ -451,15 +448,6 @@ macro_rules! impl_primitive {
             }
         }
 
-        impl Encode for $t {
-            fn encode<W>(&self, _: (), writer: &mut W) -> Result<(), Error>
-            where
-                W: io::Write,
-            {
-                self.encode(Endian::default(), writer)
-            }
-        }
-
         impl Decode<Endian> for $t {
             fn decode<R>(endian: Endian, reader: &mut R) -> Result<Self, Error>
             where
@@ -473,18 +461,48 @@ macro_rules! impl_primitive {
                 }
             }
         }
-
-        impl Decode for $t {
-            fn decode<R>(_: (), reader: &mut R) -> Result<Self, Error>
-            where
-                R: io::Read,
-            {
-                Self::decode(Endian::default(), reader)
-            }
-        }
     )*}
 }
 
 impl_primitive! {
     u8 u16 u32 u64 u128 i8 i16 i32 i64 i128 f32 f64
+}
+
+// Special case: u8/i8 are single-byte values so they can be encoded/decoded without explicit
+// endianness context.
+
+impl Encode for u8 {
+    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+    where
+        W: io::Write,
+    {
+        self.encode(Endian::Big, writer)
+    }
+}
+
+impl Decode for u8 {
+    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+    where
+        R: io::Read,
+    {
+        Self::decode(Endian::Big, reader)
+    }
+}
+
+impl Encode for i8 {
+    fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
+    where
+        W: io::Write,
+    {
+        self.encode(Endian::Big, writer)
+    }
+}
+
+impl Decode for i8 {
+    fn decode<R>(_ctx: (), reader: &mut R) -> Result<Self, Error>
+    where
+        R: io::Read,
+    {
+        Self::decode(Endian::Big, reader)
+    }
 }

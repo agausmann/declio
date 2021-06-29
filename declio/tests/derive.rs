@@ -1,4 +1,5 @@
 use declio::{ctx, Decode, Encode};
+use declio::util::BigEndian;
 use std::fmt::Debug;
 use std::io;
 
@@ -6,12 +7,12 @@ use std::io;
 struct UnitStruct;
 
 #[derive(Debug, PartialEq, Encode, Decode)]
-struct TupleStruct(u8, u32);
+struct TupleStruct(u8, BigEndian<u32>);
 
 #[derive(Debug, PartialEq, Encode, Decode)]
 struct Struct {
     x: u8,
-    y: u32,
+    y: BigEndian<u32>,
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
@@ -20,9 +21,9 @@ enum Enum {
     #[declio(id = "0")]
     Unit,
     #[declio(id = "1")]
-    Tuple(u8, u32),
+    Tuple(u8, BigEndian<u32>),
     #[declio(id = "2")]
-    Struct { x: u8, y: u32 },
+    Struct { x: u8, y: BigEndian<u32> },
 }
 
 #[derive(Debug, PartialEq, Encode, Decode)]
@@ -64,7 +65,7 @@ enum IdCtx {
 struct SkipIf {
     x: u8,
     #[declio(skip_if = "*x == 8")]
-    y: Option<u32>,
+    y: Option<BigEndian<u32>>,
 }
 
 mod little_endian {
@@ -126,7 +127,7 @@ fn unit_struct() {
 #[test]
 fn tuple_struct() {
     test_bidir(
-        TupleStruct(0xab, 0xdeadbeef),
+        TupleStruct(0xab, 0xdeadbeef.into()),
         &[0xab, 0xde, 0xad, 0xbe, 0xef],
     );
 }
@@ -136,7 +137,7 @@ fn struct_encode() {
     test_bidir(
         Struct {
             x: 0xab,
-            y: 0xdeadbeef,
+            y: 0xdeadbeef.into(),
         },
         &[0xab, 0xde, 0xad, 0xbe, 0xef],
     );
@@ -150,7 +151,7 @@ fn unit_enum() {
 #[test]
 fn tuple_enum() {
     test_bidir(
-        Enum::Tuple(0xab, 0xdeadbeef),
+        Enum::Tuple(0xab, 0xdeadbeef.into()),
         &[0x01, 0xab, 0xde, 0xad, 0xbe, 0xef],
     );
 }
@@ -160,7 +161,7 @@ fn struct_enum() {
     test_bidir(
         Enum::Struct {
             x: 0xab,
-            y: 0xdeadbeef,
+            y: 0xdeadbeef.into(),
         },
         &[0x02, 0xab, 0xde, 0xad, 0xbe, 0xef],
     );
@@ -198,5 +199,5 @@ fn id_ctx() {
 #[test]
 fn skip_if() {
     test_bidir(SkipIf { x: 8, y: None }, &[0x08]);
-    test_bidir(SkipIf { x: 7, y: Some(2) }, &[0x07, 0x00, 0x00, 0x00, 0x02]);
+    test_bidir(SkipIf { x: 7, y: Some(2.into()) }, &[0x07, 0x00, 0x00, 0x00, 0x02]);
 }

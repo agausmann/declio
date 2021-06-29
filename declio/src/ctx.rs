@@ -28,16 +28,9 @@ impl Endian {
         endian
     }
 
-    /// "Network-endian", an alias for big-endian, the default endianness.
+    /// "Network-endian", an alias for big-endian.
     pub const fn network() -> Self {
         Self::Big
-    }
-}
-
-impl Default for Endian {
-    /// (Network- / Big-endian) The default endianness used to encode primitives.
-    fn default() -> Self {
-        Self::network()
     }
 }
 

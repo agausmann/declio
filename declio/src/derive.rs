@@ -40,11 +40,12 @@
 //!
 //! ```
 //! use declio::{Encode, Decode};
-//! use declio::ctx::Len;
+//! use declio::ctx::{Len, Endian};
 //! use std::convert::TryFrom;
 //!
 //! #[derive(Encode, Decode)]
 //! struct LengthPrefixedBytes {
+//!     #[declio(ctx = "Endian::Big")]
 //!     len: u16,
 //!     #[declio(ctx(decode = "Len::try_from(len)?"))]
 //!     bytes: Vec<u8>,
@@ -143,12 +144,13 @@
 //!
 //! ```
 //! use declio::{Encode, Decode};
+//! use declio::ctx::Endian;
 //!
 //! #[derive(Encode, Decode)]
 //! struct OptionalExtraData {
 //!     tag: u8,
 //!
-//!     #[declio(skip_if = "*tag != 2")]
+//!     #[declio(ctx = "Endian::Big", skip_if = "*tag != 2")]
 //!     extra_data: Option<u32>,
 //! }
 //! ```
