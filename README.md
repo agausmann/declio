@@ -5,9 +5,15 @@ A declarative I/O serialization library.
 `declio` provides a pair of traits, [`Encode`] and [`Decode`], that facilitate bidirectional
 conversions between binary data streams (the `std::io` traits) and arbitrary data types.
 
-These traits are implemented for many of the types in `std`; primitives can be encoded and
-decoded as their big- or little-endian binary representations, and collections and other
-container types encode and decode the data they contain.
+These traits are implemented for many of the types in `std`; integer and floating-point
+primitives can be encoded and decoded as their big- or little-endian binary representations,
+and collections and other container types encode and decode the data they contain.
+
+However, there are some notable exceptions; for example, there are no implementations for
+`bool` and `str`/`String`. This is because these types have several common representations, so
+to avoid accidental misuse, you are required to explicitly declare their representation. Some
+of the common representations are provided in the [`util`] module, implemented as both wrapper
+types and helper modules.
 
 This crate also provides a pair of derive macros, via the default feature `derive`, that can
 implement `Encode` and `Decode` for arbitrary compound data types. By default it will encode
@@ -48,7 +54,7 @@ at runtime, like this:
 
 ```rust
 use declio::Decode;
-use declio::ctx::Len;
+use declio::ctx::{Len, Endian};
 
 let mut bytes = &[
     // len
@@ -61,10 +67,10 @@ let mut bytes = &[
     0xbe, 0xef,
 ][..];
 
-let len = u16::decode((), &mut bytes)
+let len = u16::decode(Endian::Big, &mut bytes)
     .expect("decode len failed");
 
-let words: Vec<u16> = Vec::decode(Len(len as usize), &mut bytes)
+let words: Vec<u16> = Vec::decode((Len(len as usize), Endian::Big), &mut bytes)
     .expect("decode bytes failed");
 
 assert!(bytes.is_empty()); // did we consume the whole buffer?
@@ -76,10 +82,6 @@ length value. It doesn't know what integer size or byte order the binary format 
 the length; it doesn't even know if the length is encoded at all! It might be some fixed length
 defined as part of the format.
 
-Also note that we are decoding integers in this example, but I've omitted the `Endian` context,
-instead passing `()` to `u16::decode`.  In the case of `u16` and other primitives, providing
-`()` as context defaults to `Endian::Big`.
-
 `Vec::decode` can also accept an additional context value to pass to the element decoder, using
 a 2-tuple like `(Len(len as usize), Endian::Big)`. However, in this example, only a `Len` is
 passed, which is also valid and will pass `()` as context to the element decoder.
@@ -88,11 +90,11 @@ passed, which is also valid and will pass `()` as context to the element decoder
 
 Here is an example which makes use of derive macros to encode and decode a
 user-defined data type. This is not a complete demonstration of the features of the derive
-macros; for a more complete reference, see the [`derive`] module docs.
+macros; for a more complete reference, see the [`mod@derive`] module docs.
 
 ```rust
 use declio::{Encode, Decode};
-use declio::ctx::Endian;
+use declio::ctx::{Endian, Len};
 use std::convert::TryInto;
 
 #[derive(Debug, PartialEq, Encode, Decode)]
@@ -103,11 +105,14 @@ struct WithLength {
 
     // Context may be different for encode and decode,
     // though they should generally be as symmetric as possible.
-    // For example, `Vec` doesn't accept a `Len` when encoding.
+    // For example, `Vec` requires a `Len` when decoding, but it is
+    // optional for encoding. However, it should be provided anyway
+    // because it will be used to check that the encoded length is
+    // the same as the actual length.
     //
     // Fields declared before this one can be accessed by name
     // (or by `field_0`, `field_1`, etc for tuple structs):
-    #[declio(ctx(encode = "Endian::Little", decode = "(len.try_into()?, Endian::Little)"))]
+    #[declio(ctx = "Len((*len).try_into()?)")]
     bytes: Vec<u8>,
 }
 
@@ -118,16 +123,13 @@ let with_length = WithLength {
     bytes,
 };
 
-let mut encoded: Vec<u8> = Vec::new();
-with_length.encode((), &mut encoded)
+let encoded: Vec<u8> = declio::to_bytes(&with_length)
     .expect("encode failed");
 assert_eq!(encoded, [0x04, 0x00, 0xde, 0xad, 0xbe, 0xef]);
 
-let mut decode_reader: &[u8] = encoded.as_slice();
-let decoded = WithLength::decode((), &mut decode_reader)
+let decoded: WithLength = declio::from_bytes(&encoded)
     .expect("decode failed");
 
-assert!(decode_reader.is_empty());
 assert_eq!(decoded, with_length);
 ```
 
