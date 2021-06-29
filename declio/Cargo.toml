@@ -1,6 +1,6 @@
 [package]
 name = "declio"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Adam Gausmann <agausmann@fastmail.com>"]
 edition = "2018"
 description = "A declarative I/O serialization library."
@@ -15,4 +15,4 @@ default = ["derive"]
 derive = ["declio_derive"]
 
 [dependencies]
-declio_derive = { path = "../declio_derive", version = "0.1", optional = true }
+declio_derive = { path = "../declio_derive", version = "0.2", optional = true }
