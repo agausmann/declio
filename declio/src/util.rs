@@ -119,7 +119,7 @@ endian_wrappers! {
 ///     len: u32,
 ///
 ///     // Note here, we are using `with = "utf8"` instead of a `Utf8` wrapper type.
-///     #[declio(with = "utf8", ctx(decode = "Len((*len).try_into()?)"))]
+///     #[declio(with = "utf8", ctx = "Len((*len).try_into()?)")]
 ///     value: String,
 /// }
 ///
@@ -140,20 +140,21 @@ endian_wrappers! {
 /// ```
 pub mod utf8 {
     use crate::{Encode, Decode, Error};
-    use crate::ctx::Len;
 
     #[allow(missing_docs)]
-    pub fn encode<S, W>(string: &S, _ctx: (), writer: &mut W) -> Result<(), Error>
+    pub fn encode<S, Ctx, W>(string: &S, ctx: Ctx, writer: &mut W) -> Result<(), Error>
     where
         S: AsRef<str>,
+        [u8]: Encode<Ctx>,
         W: std::io::Write,
     {
-        string.as_ref().as_bytes().encode((), writer)
+        string.as_ref().as_bytes().encode(ctx, writer)
     }
 
     #[allow(missing_docs)]
-    pub fn decode<R>(ctx: Len, reader: &mut R) -> Result<String, Error>
+    pub fn decode<Ctx, R>(ctx: Ctx, reader: &mut R) -> Result<String, Error>
     where
+        Vec<u8>: Decode<Ctx>,
         R: std::io::Read,
     {
         let bytes: Vec<u8> = Decode::decode(ctx, reader)?;
@@ -179,7 +180,7 @@ pub mod utf8 {
 /// pub struct Text {
 ///     #[declio(ctx = "Endian::Big")]
 ///     len: u32,
-///     #[declio(ctx(decode = "Len((*len).try_into()?)"))]
+///     #[declio(ctx = "Len((*len).try_into()?)")]
 ///     value: Utf8,
 /// }
 ///
@@ -201,12 +202,21 @@ pub mod utf8 {
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Utf8(pub String);
 
+impl Encode<Len> for Utf8 {
+    fn encode<W>(&self, ctx: Len, writer: &mut W) -> Result<(), Error>
+    where
+        W: std::io::Write,
+    {
+        utf8::encode(&self.0, ctx, writer)
+    }
+}
+
 impl Encode<()> for Utf8 {
     fn encode<W>(&self, _ctx: (), writer: &mut W) -> Result<(), Error>
     where
         W: std::io::Write,
     {
-        utf8::encode(&self.0, (), writer)
+        utf8::encode(&self.0, ((),), writer)
     }
 }
 

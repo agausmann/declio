@@ -47,7 +47,7 @@
 //! struct LengthPrefixedBytes {
 //!     #[declio(ctx = "Endian::Big")]
 //!     len: u16,
-//!     #[declio(ctx(decode = "Len((*len).try_into()?)"))]
+//!     #[declio(ctx = "Len((*len).try_into()?)")]
 //!     bytes: Vec<u8>,
 //! }
 //! ```
@@ -71,7 +71,7 @@
 //! #[derive(Encode, Decode)]
 //! #[declio(ctx = "len: usize")]
 //! struct UnknownLength<T: Encode + Decode> {
-//!     #[declio(ctx(decode = "Len(len)"))]
+//!     #[declio(ctx = "Len(len)")]
 //!     vec: Vec<T>,
 //! }
 //! ```

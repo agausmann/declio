@@ -103,11 +103,14 @@
 //!
 //!     // Context may be different for encode and decode,
 //!     // though they should generally be as symmetric as possible.
-//!     // For example, `Vec` doesn't accept a `Len` when encoding.
+//!     // For example, `Vec` requires a `Len` when decoding, but it is
+//!     // optional for encoding. However, it should be provided anyway
+//!     // because it will be used to check that the encoded length is
+//!     // the same as the actual length.
 //!     //
 //!     // Fields declared before this one can be accessed by name
 //!     // (or by `field_0`, `field_1`, etc for tuple structs):
-//!     #[declio(ctx(decode = "Len((*len).try_into()?)"))]
+//!     #[declio(ctx = "Len((*len).try_into()?)")]
 //!     bytes: Vec<u8>,
 //! }
 //!
@@ -229,7 +232,50 @@ where
     }
 }
 
-impl<T, Ctx> Encode<Ctx> for [T]
+impl<T, Ctx> Encode<(Len, Ctx)> for [T]
+where
+    T: Encode<Ctx>,
+    Ctx: Clone,
+{
+    /// Encodes each element of the vector in order.
+    ///
+    /// If length is also to be encoded, it has to be done separately.
+    ///
+    /// The length context is provided as a sanity check to protect against logic errors; if the
+    /// provided length context is not equal to the vector's length, then this function will return
+    /// an error.
+    fn encode<W>(&self, (Len(len), inner_ctx): (Len, Ctx), writer: &mut W) -> Result<(), Error>
+    where
+         W: io::Write,
+    {
+        if self.len() != len {
+            Err(Error::new("provided length context does not match the slice length"))
+        } else {
+            self.encode((inner_ctx,), writer)
+        }
+    }
+}
+
+impl<T> Encode<Len> for [T]
+where
+    T: Encode,
+{
+    /// Encodes each element of the vector in order.
+    ///
+    /// If length is also to be encoded, it has to be done separately.
+    ///
+    /// The length context is provided as a sanity check to protect against logic errors; if the
+    /// provided length context is not equal to the vector's length, then this function will return
+    /// an error.
+    fn encode<W>(&self, len: Len, writer: &mut W) -> Result<(), Error>
+    where
+         W: io::Write,
+    {
+        self.encode((len, ()), writer)
+    }
+}
+
+impl<T, Ctx> Encode<(Ctx,)> for [T]
 where
     T: Encode<Ctx>,
     Ctx: Clone,
@@ -237,7 +283,7 @@ where
     /// Encodes each element of the slice in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    fn encode<W>(&self, (inner_ctx,): (Ctx,), writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
@@ -282,7 +328,7 @@ where
     }
 }
 
-impl<T, Ctx> Encode<Ctx> for Vec<T>
+impl<T, Ctx> Encode<(Len, Ctx)> for Vec<T>
 where
     T: Encode<Ctx>,
     Ctx: Clone,
@@ -290,11 +336,50 @@ where
     /// Encodes each element of the vector in order.
     ///
     /// If length is also to be encoded, it has to be done separately.
-    fn encode<W>(&self, inner_ctx: Ctx, writer: &mut W) -> Result<(), Error>
+    ///
+    /// The length context is provided as a sanity check to protect against logic errors; if the
+    /// provided length context is not equal to the vector's length, then this function will return
+    /// an error.
+    fn encode<W>(&self, ctx: (Len, Ctx), writer: &mut W) -> Result<(), Error>
+    where
+         W: io::Write,
+    {
+        self.as_slice().encode(ctx, writer)
+    }
+}
+
+impl<T> Encode<Len> for Vec<T>
+where
+    T: Encode,
+{
+    /// Encodes each element of the vector in order.
+    ///
+    /// If length is also to be encoded, it has to be done separately.
+    ///
+    /// The length context is provided as a sanity check to protect against logic errors; if the
+    /// provided length context is not equal to the vector's length, then this function will return
+    /// an error.
+    fn encode<W>(&self, ctx: Len, writer: &mut W) -> Result<(), Error>
+    where
+         W: io::Write,
+    {
+        self.as_slice().encode(ctx, writer)
+    }
+}
+
+impl<T, Ctx> Encode<(Ctx,)> for Vec<T>
+where
+    T: Encode<Ctx>,
+    Ctx: Clone,
+{
+    /// Encodes each element of the vector in order.
+    ///
+    /// If length is also to be encoded, it has to be done separately.
+    fn encode<W>(&self, ctx: (Ctx,), writer: &mut W) -> Result<(), Error>
     where
         W: io::Write,
     {
-        self.as_slice().encode(inner_ctx, writer)
+        self.as_slice().encode(ctx, writer)
     }
 }
 
