@@ -48,7 +48,7 @@ macro_rules! magic_bytes {
             where
                 R: std::io::Read,
             {
-                let bytes: [u8; ($bytes).len()] = Decode::decode((), reader)?;
+                let bytes: [u8; ($bytes).len()] = $crate::Decode::decode((), reader)?;
                 if &bytes != $bytes {
                     return Err($crate::Error::new(format!(
                         "magic bytes mismatch: expected {:x?}, got {:x?}",
