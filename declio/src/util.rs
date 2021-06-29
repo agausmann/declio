@@ -139,7 +139,7 @@ endian_wrappers! {
 ///
 /// ```
 pub mod utf8 {
-    use crate::{Encode, Decode, Error};
+    use crate::{Decode, Encode, Error};
 
     #[allow(missing_docs)]
     pub fn encode<S, Ctx, W>(string: &S, ctx: Ctx, writer: &mut W) -> Result<(), Error>
@@ -273,7 +273,7 @@ impl From<Utf8> for String {
 /// assert_eq!(decoded, value);
 /// ```
 pub mod zero_one {
-    use crate::{Encode, Decode, Error};
+    use crate::{Decode, Encode, Error};
 
     #[allow(missing_docs)]
     pub fn encode<W>(b: &bool, _ctx: (), writer: &mut W) -> Result<(), Error>

@@ -178,7 +178,7 @@ where
 }
 
 /// Decodes a value from a byte slice.
-/// 
+///
 /// The byte slice should be consumed entirely; if there are bytes left over after decoding, it
 /// will return an error.
 pub fn from_bytes<T>(bytes: &[u8]) -> Result<T, Error>
@@ -189,7 +189,7 @@ where
 }
 
 /// Decodes a value from a byte slice, with context.
-/// 
+///
 /// The byte slice should be consumed entirely; if there are bytes left over after decoding, it
 /// will return an error.
 pub fn from_bytes_with_context<T, Ctx>(mut bytes: &[u8], ctx: Ctx) -> Result<T, Error>
@@ -246,10 +246,12 @@ where
     /// an error.
     fn encode<W>(&self, (Len(len), inner_ctx): (Len, Ctx), writer: &mut W) -> Result<(), Error>
     where
-         W: io::Write,
+        W: io::Write,
     {
         if self.len() != len {
-            Err(Error::new("provided length context does not match the slice length"))
+            Err(Error::new(
+                "provided length context does not match the slice length",
+            ))
         } else {
             self.encode((inner_ctx,), writer)
         }
@@ -269,7 +271,7 @@ where
     /// an error.
     fn encode<W>(&self, len: Len, writer: &mut W) -> Result<(), Error>
     where
-         W: io::Write,
+        W: io::Write,
     {
         self.encode((len, ()), writer)
     }
@@ -342,7 +344,7 @@ where
     /// an error.
     fn encode<W>(&self, ctx: (Len, Ctx), writer: &mut W) -> Result<(), Error>
     where
-         W: io::Write,
+        W: io::Write,
     {
         self.as_slice().encode(ctx, writer)
     }
@@ -361,7 +363,7 @@ where
     /// an error.
     fn encode<W>(&self, ctx: Len, writer: &mut W) -> Result<(), Error>
     where
-         W: io::Write,
+        W: io::Write,
     {
         self.as_slice().encode(ctx, writer)
     }

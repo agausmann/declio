@@ -1,5 +1,5 @@
-use declio::{ctx, Decode, Encode};
 use declio::util::BigEndian;
+use declio::{ctx, Decode, Encode};
 use std::fmt::Debug;
 use std::io;
 
@@ -198,5 +198,11 @@ fn id_ctx() {
 #[test]
 fn skip_if() {
     test_bidir(SkipIf { x: 8, y: None }, &[0x08]);
-    test_bidir(SkipIf { x: 7, y: Some(2.into()) }, &[0x07, 0x00, 0x00, 0x00, 0x02]);
+    test_bidir(
+        SkipIf {
+            x: 7,
+            y: Some(2.into()),
+        },
+        &[0x07, 0x00, 0x00, 0x00, 0x02],
+    );
 }
