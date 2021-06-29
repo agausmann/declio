@@ -76,9 +76,13 @@
 //! }
 //! ```
 //!
-//! - **`id_expr`** (Required for enums, conflicts with `id_type`) - Use the given expression as
+//! - **`id_expr`** (Asymmetric, required for enums, conflicts with `id_type`) - Use the given expression as
 //! the variant ID when decoding. Unlike `id_type`, the variant ID is not encoded or decoded as
-//! part of the enum. Useful for specifying a variant ID via a `ctx` field.
+//! part of the enum. Useful for specifying a variant ID via a `ctx` field.  
+//! When encoding, the given expression will also be checked against the variant to ensure it is
+//! correct, and an error will be raised if they do not match. If you want to suppress this
+//! behavior (ie if the value in `id_expr` is not available during encoding), you can pass it asymmetrically,
+//! like `id_expr(decode = "...")`.
 //!
 //! - **`id_type`** (Required for enums, conflicts with `id_expr`) - Encode or decode the variant ID
 //! as the given type before encoding/decoding the fields.
