@@ -92,7 +92,7 @@
 //!
 //! ```
 //! use declio::{Encode, Decode};
-//! use declio::ctx::Endian;
+//! use declio::ctx::{Endian, Len};
 //! use std::convert::TryInto;
 //!
 //! #[derive(Debug, PartialEq, Encode, Decode)]
@@ -107,7 +107,7 @@
 //!     //
 //!     // Fields declared before this one can be accessed by name
 //!     // (or by `field_0`, `field_1`, etc for tuple structs):
-//!     #[declio(ctx(encode = "Endian::Little", decode = "(len.try_into()?, Endian::Little)"))]
+//!     #[declio(ctx(decode = "Len((*len).try_into()?)"))]
 //!     bytes: Vec<u8>,
 //! }
 //!

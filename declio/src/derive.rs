@@ -41,13 +41,13 @@
 //! ```
 //! use declio::{Encode, Decode};
 //! use declio::ctx::{Len, Endian};
-//! use std::convert::TryFrom;
+//! use std::convert::TryInto;
 //!
 //! #[derive(Encode, Decode)]
 //! struct LengthPrefixedBytes {
 //!     #[declio(ctx = "Endian::Big")]
 //!     len: u16,
-//!     #[declio(ctx(decode = "Len::try_from(len)?"))]
+//!     #[declio(ctx(decode = "Len((*len).try_into()?)"))]
 //!     bytes: Vec<u8>,
 //! }
 //! ```
