@@ -90,16 +90,15 @@ fn test_encode<T, Ctx>(input: T, expected: &[u8], ctx: Ctx)
 where
     T: Encode<Ctx>,
 {
-    let mut output = Vec::new();
-    input.encode(ctx, &mut output).unwrap();
+    let output = declio::to_bytes_with_context(&input, ctx).unwrap();
     assert_eq!(output, expected);
 }
 
-fn test_decode<T, Ctx>(mut input: &[u8], expected: &T, ctx: Ctx)
+fn test_decode<T, Ctx>(input: &[u8], expected: &T, ctx: Ctx)
 where
     T: Decode<Ctx> + Debug + PartialEq,
 {
-    let output = T::decode(ctx, &mut input).unwrap();
+    let output: T = declio::from_bytes_with_context(input, ctx).unwrap();
     assert_eq!(output, *expected);
 }
 

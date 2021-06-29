@@ -1,8 +1,5 @@
 //! Types that give context to encoders and decoders.
 
-use std::convert::{TryFrom, TryInto};
-use std::num::TryFromIntError;
-
 /// The endianness, or byte order, of primitive types.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Endian {

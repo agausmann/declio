@@ -6,7 +6,6 @@
 /// # Example
 ///
 /// ```
-/// use declio::{Encode, Decode};
 /// use declio::util::magic_bytes;
 ///
 /// // creates a `pub struct Foo;` and a `struct Bar;`:
@@ -18,15 +17,11 @@
 ///     Bar(b"BAR");
 /// }
 ///
-/// let mut bytes = Vec::new();
-/// Foo.encode((), &mut bytes).unwrap();
+/// let bytes: Vec<u8> = declio::to_bytes(&Foo).unwrap();
 /// assert_eq!(bytes, b"FOO");
 ///
-/// let mut reader = bytes.as_slice();
-/// assert!(Foo::decode((), &mut reader).is_ok());
-///
-/// let mut reader = bytes.as_slice();
-/// assert!(Bar::decode((), &mut reader).is_err());
+/// assert!(declio::from_bytes::<Foo>(&bytes).is_ok());
+/// assert!(declio::from_bytes::<Bar>(&bytes).is_err());
 /// ```
 #[macro_export]
 macro_rules! magic_bytes {

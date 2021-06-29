@@ -118,16 +118,13 @@
 //!     bytes,
 //! };
 //!
-//! let mut encoded: Vec<u8> = Vec::new();
-//! with_length.encode((), &mut encoded)
+//! let encoded: Vec<u8> = declio::to_bytes(&with_length)
 //!     .expect("encode failed");
 //! assert_eq!(encoded, [0x04, 0x00, 0xde, 0xad, 0xbe, 0xef]);
 //!
-//! let mut decode_reader: &[u8] = encoded.as_slice();
-//! let decoded = WithLength::decode((), &mut decode_reader)
+//! let decoded: WithLength = declio::from_bytes(&encoded)
 //!     .expect("decode failed");
 //!
-//! assert!(decode_reader.is_empty());
 //! assert_eq!(decoded, with_length);
 //! ```
 //!
@@ -158,6 +155,51 @@ pub use declio_derive::Encode;
 use self::ctx::{Endian, Len};
 use std::borrow::Cow;
 use std::{io, mem};
+
+/// Encodes a value into a vector of bytes.
+pub fn to_bytes<T>(value: T) -> Result<Vec<u8>, Error>
+where
+    T: Encode,
+{
+    to_bytes_with_context(value, ())
+}
+
+/// Encodes a value into a vector of bytes, with context.
+pub fn to_bytes_with_context<T, Ctx>(value: T, ctx: Ctx) -> Result<Vec<u8>, Error>
+where
+    T: Encode<Ctx>,
+{
+    let mut bytes = Vec::new();
+    value.encode(ctx, &mut bytes)?;
+    Ok(bytes)
+}
+
+/// Decodes a value from a byte slice.
+/// 
+/// The byte slice should be consumed entirely; if there are bytes left over after decoding, it
+/// will return an error.
+pub fn from_bytes<T>(bytes: &[u8]) -> Result<T, Error>
+where
+    T: Decode,
+{
+    from_bytes_with_context(bytes, ())
+}
+
+/// Decodes a value from a byte slice, with context.
+/// 
+/// The byte slice should be consumed entirely; if there are bytes left over after decoding, it
+/// will return an error.
+pub fn from_bytes_with_context<T, Ctx>(mut bytes: &[u8], ctx: Ctx) -> Result<T, Error>
+where
+    T: Decode<Ctx>,
+{
+    let value = T::decode(ctx, &mut bytes)?;
+    if bytes.is_empty() {
+        Ok(value)
+    } else {
+        Err(Error::new("byte slice was not fully consumed"))
+    }
+}
 
 /// A type that can be encoded into a byte stream.
 pub trait Encode<Ctx = ()> {
