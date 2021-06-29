@@ -3,9 +3,15 @@
 //! `declio` provides a pair of traits, [`Encode`] and [`Decode`], that facilitate bidirectional
 //! conversions between binary data streams (the `std::io` traits) and arbitrary data types.
 //!
-//! These traits are implemented for many of the types in `std`; primitives can be encoded and
-//! decoded as their big- or little-endian binary representations, and collections and other
-//! container types encode and decode the data they contain.
+//! These traits are implemented for many of the types in `std`; integer and floating-point
+//! primitives can be encoded and decoded as their big- or little-endian binary representations,
+//! and collections and other container types encode and decode the data they contain.
+//!
+//! However, there are some notable exceptions; for example, there are no implementations for
+//! `bool` and `str`/`String`. This is because these types have several common representations, so
+//! to avoid accidental misuse, you are required to explicitly declare their representation. Some
+//! of the common representations are provided in the [`util`] module, implemented as both wrapper
+//! types and helper modules.
 //!
 //! This crate also provides a pair of derive macros, via the default feature `derive`, that can
 //! implement `Encode` and `Decode` for arbitrary compound data types. By default it will encode
